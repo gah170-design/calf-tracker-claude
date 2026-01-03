@@ -33,6 +33,7 @@ export default function CalfTracker() {
   const [showAddCalf, setShowAddCalf] = useState(false);
   const [showNumberPrompt, setShowNumberPrompt] = useState(false);
   const [customNumber, setCustomNumber] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
   const [newCalf, setNewCalf] = useState({
     name: '',
     birthDate: new Date().toISOString().slice(0, 16),
@@ -699,6 +700,7 @@ if (currentPage === 'dashboard') {
   return null;
 
 }
+
 
 
 
