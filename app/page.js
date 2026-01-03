@@ -619,8 +619,7 @@ export default function CalfTracker() {
                     <textarea
                       placeholder="Notes..."
                       value={todayFeeding?.notes || ''}
-                      onChange={(e) => updateF
-eedingNotes(calf.number, e.target.value)}
+                      onChange={(e) => updateFeedingNotes(calf.number, e.target.value)}
                       className="w-full p-2 border rounded text-sm mb-2"
                       rows="2"
                     />
@@ -644,4 +643,5 @@ eedingNotes(calf.number, e.target.value)}
   }
 
   return null;
+
 }
