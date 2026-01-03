@@ -616,13 +616,7 @@ export default function CalfTracker() {
                       </div>
                     </div>
 
-                    <textarea
-                      placeholder="Notes..."
-                      value={todayFeeding?.notes || ''}
-                      onChange={(e) => updateFeedingNotes(calf.number, e.target.value)}
-                      className="w-full p-2 border rounded text-sm mb-2"
-                      rows="2"
-                    />
+                    <textarea placeholder="Notes..." value={todayFeeding?.notes || ''} onChange={(e) => updateFeedingNotes(calf.number, e.target.value)} className="w-full p-2 border rounded text-sm mb-2" rows="2" />
 
                     <label className="flex items-center text-sm">
                       <input
@@ -645,3 +639,4 @@ export default function CalfTracker() {
   return null;
 
 }
+
