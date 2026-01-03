@@ -366,10 +366,19 @@ if (currentPage === 'dashboard') {
       }}
       className="text-sm opacity-90 hover:underline"
     >
-      {currentUser.name} (Switch User)
-    </button>
-  </div>
+      
+  {currentUser.name} (Switch User)
+          </button>
         </div>
+        {currentUser.role === 'admin' && (
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-2 hover:bg-blue-700 rounded"
+          >
+            <Settings size={24} />
+          </button>
+        )}
+      </div>
 
         <div className="p-4">
           {flaggedCount > 0 && (
@@ -689,6 +698,7 @@ if (showSettings) {
   return null;
 
 }
+
 
 
 
