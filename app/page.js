@@ -350,8 +350,7 @@ export default function CalfTracker() {
       </div>
     );
   }
-
-  if (currentPage === 'dashboard') {
+if (currentPage === 'dashboard') {
     const protocolCounts = getProtocolCounts();
     const flaggedCount = getFlaggedCount();
 
@@ -360,8 +359,16 @@ export default function CalfTracker() {
         <div className="bg-blue-600 text-white p-4 flex justify-between items-center">
           <div>
             <h1 className="text-xl font-bold">Calf Tracker</h1>
-            <p className="text-sm opacity-90">{currentUser.name}</p>
-          </div>
+            <button 
+              onClick={() => {
+        localStorage.removeItem('calfTrackerUser');
+        setCurrentUser(null);
+      }}
+      className="text-sm opacity-90 hover:underline"
+    >
+      {currentUser.name} (Switch User)
+    </button>
+  </div>
         </div>
 
         <div className="p-4">
@@ -636,9 +643,52 @@ export default function CalfTracker() {
       </div>
     );
   }
-
+if (showSettings) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-lg p-6 max-w-md w-full">
+          <h2 className="text-xl font-bold mb-4">Settings</h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Next Calf Number:</label>
+              <input
+                type="number"
+                value={settings.nextCalfNumber}
+                onChange={(e) => setSettings({ ...settings, nextCalfNumber: parseInt(e.target.value) })}
+                className="w-full p-2 border rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Flag After (consecutive low feedings):</label>
+              <input
+                type="number"
+                value={settings.flagFeedingCount}
+                onChange={(e) => setSettings({ ...settings, flagFeedingCount: parseInt(e.target.value) })}
+                className="w-full p-2 border rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Flag If Below (%):</label>
+              <input
+                type="number"
+                value={settings.flagPercentage}
+                onChange={(e) => setSettings({ ...settings, flagPercentage: parseInt(e.target.value) })}
+                className="w-full p-2 border rounded"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowSettings(false)} className="flex-1 bg-gray-300 py-2 rounded">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   return null;
 
 }
+
 
 
