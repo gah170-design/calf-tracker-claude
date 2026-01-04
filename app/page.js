@@ -24,6 +24,7 @@ export default function CalfTracker() {
   const [settings, setSettings] = useState({ nextCalfNumber: 1000 });
   const [newCalf, setNewCalf] = useState({ name: '', birthDate: new Date().toISOString().slice(0, 16) });
   const [newUser, setNewUser] = useState({ name: '', role: 'user' });
+  const [noteBuffer, setNoteBuffer] = useState({});
 
   useEffect(() => {
     const init = async () => {
@@ -135,6 +136,7 @@ export default function CalfTracker() {
 
     if (existing) {
       await supabase.from('feedings').update({ notes }).eq('id', existing.id);
+      await loadAllData();
     }
   };
 
@@ -348,8 +350,14 @@ export default function CalfTracker() {
                   {/* Notes */}
                   <textarea
                     placeholder="Notes..."
-                    value={todayFeeding?.notes || ''}
-                    onChange={(e) => updateFeedingNotes(calf.number, e.target.value)}
+                    value={noteBuffer[calf.number] !== undefined ? noteBuffer[calf.number] : (todayFeeding?.notes || '')}
+                    onChange={(e) => setNoteBuffer({ ...noteBuffer, [calf.number]: e.target.value })}
+                    onBlur={(e) => {
+                      updateFeedingNotes(calf.number, e.target.value);
+                      const newBuffer = { ...noteBuffer };
+                      delete newBuffer[calf.number];
+                      setNoteBuffer(newBuffer);
+                    }}
                     className="w-full p-3 bg-slate-50 rounded-2xl text-sm mb-2 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     rows="2"
                   />
