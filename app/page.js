@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, X, ChevronLeft, Trash2, UserPlus } from 'lucide-react';
+import { Plus, Settings, X, ChevronLeft, Trash2 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -19,9 +19,11 @@ export default function CalfTracker() {
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddCalf, setShowAddCalf] = useState(false);
+  const [showAddUser, setShowAddUser] = useState(false);
   const [filterProtocol, setFilterProtocol] = useState('all');
   const [settings, setSettings] = useState({ nextCalfNumber: 1000 });
   const [newCalf, setNewCalf] = useState({ name: '', birthDate: new Date().toISOString().slice(0, 16) });
+  const [newUser, setNewUser] = useState({ name: '', role: 'user' });
 
   useEffect(() => {
     const init = async () => {
@@ -81,7 +83,141 @@ export default function CalfTracker() {
     }
   };
 
+  const addUser = async () => {
+    if (!newUser.name.trim()) return;
+    await supabase.from('users').insert([{ name: newUser.name.trim(), role: newUser.role }]);
+    setNewUser({ name: '', role: 'user' });
+    setShowAddUser(false);
+    await loadAllData();
+  };
+
+  const recordFeeding = async (calfNumber, consumption) => {
+    const now = new Date();
+    const period = now.getHours() < 12 ? 'AM' : 'PM';
+    const today = now.toISOString().slice(0, 10);
+    const calf = calves.find(c => c.number === calfNumber);
+    
+    const existing = feedings.find(
+      f => f.calf_number === calfNumber && 
+           f.timestamp.startsWith(today) && 
+           f.period === period
+    );
+
+    if (existing) {
+      await supabase.from('feedings')
+        .update({ consumption, timestamp: now.toISOString() })
+        .eq('id', existing.id);
+    } else {
+      await supabase.from('feedings').insert([{
+        calf_number: calfNumber,
+        calf_name: calf?.name || null,
+        timestamp: now.toISOString(),
+        period,
+        consumption,
+        notes: null,
+        treatment: false,
+        user_name: currentUser.name
+      }]);
+    }
+    await loadAllData();
+  };
+
+  const updateFeedingNotes = async (calfNumber, notes) => {
+    const now = new Date();
+    const period = now.getHours() < 12 ? 'AM' : 'PM';
+    const today = now.toISOString().slice(0, 10);
+    
+    const existing = feedings.find(
+      f => f.calf_number === calfNumber && 
+           f.timestamp.startsWith(today) && 
+           f.period === period
+    );
+
+    if (existing) {
+      await supabase.from('feedings').update({ notes }).eq('id', existing.id);
+    }
+  };
+
+  const toggleTreatment = async (calfNumber) => {
+    const now = new Date();
+    const period = now.getHours() < 12 ? 'AM' : 'PM';
+    const today = now.toISOString().slice(0, 10);
+    
+    const existing = feedings.find(
+      f => f.calf_number === calfNumber && 
+           f.timestamp.startsWith(today) && 
+           f.period === period
+    );
+
+    if (existing) {
+      await supabase.from('feedings')
+        .update({ treatment: !existing.treatment })
+        .eq('id', existing.id);
+      await loadAllData();
+    }
+  };
+
   const getCalfAge = (date) => Math.floor((new Date() - new Date(date)) / (1000 * 60 * 60 * 24));
+
+  const getCalfFeedingCount = (calfNumber) => {
+    return feedings.filter(f => f.calf_number === calfNumber).length;
+  };
+
+  const getProtocolStatus = (calf) => {
+    const age = getCalfAge(calf.birth_date);
+    const feedingCount = getCalfFeedingCount(calf.number);
+    
+    for (let protocol of protocols) {
+      if (protocol.type === 'feedings' && feedingCount < protocol.value) {
+        return protocol.name;
+      }
+      if (protocol.type === 'days' && age < protocol.value) {
+        return protocol.name;
+      }
+    }
+    return protocols[protocols.length - 1]?.name || 'Unknown';
+  };
+
+  const getCalfFeedings = (calfNumber, count = 3) => {
+    return feedings
+      .filter(f => f.calf_number === calfNumber)
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      .slice(-count);
+  };
+
+  const getTodayFeeding = (calfNumber) => {
+    const now = new Date();
+    const period = now.getHours() < 12 ? 'AM' : 'PM';
+    const today = now.toISOString().slice(0, 10);
+    
+    return feedings.find(
+      f => f.calf_number === calfNumber && 
+           f.timestamp.startsWith(today) && 
+           f.period === period
+    );
+  };
+
+  const getProtocolCounts = () => {
+    const counts = {};
+    protocols.forEach(p => counts[p.name] = 0);
+    
+    calves.filter(c => c.status === 'active').forEach(calf => {
+      const protocol = getProtocolStatus(calf);
+      counts[protocol] = (counts[protocol] || 0) + 1;
+    });
+    
+    return counts;
+  };
+
+  const getFilteredCalves = () => {
+    let filtered = calves.filter(c => c.status === 'active');
+    
+    if (filterProtocol !== 'all') {
+      filtered = filtered.filter(c => getProtocolStatus(c) === filterProtocol);
+    }
+    
+    return filtered.sort((a, b) => new Date(a.birth_date) - new Date(b.birth_date));
+  };
 
   if (loading) return <div className="h-screen flex items-center justify-center font-black">LOADING...</div>;
 
@@ -103,6 +239,9 @@ export default function CalfTracker() {
     );
   }
 
+  const protocolCounts = getProtocolCounts();
+  const filteredCalves = getFilteredCalves();
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       {/* HEADER */}
@@ -113,9 +252,11 @@ export default function CalfTracker() {
             {currentUser.name} • LOGOUT
           </button>
         </div>
-        <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full">
-          <Settings size={22} />
-        </button>
+        {currentUser.role === 'admin' && (
+          <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full">
+            <Settings size={22} />
+          </button>
+        )}
       </header>
 
       {/* MAIN */}
@@ -124,32 +265,108 @@ export default function CalfTracker() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               {protocols.map(p => (
-                <div key={p.id} className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+                <button key={p.id} onClick={() => { setFilterProtocol(p.name); setCurrentPage('feed'); }}
+                  className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
                   <div className="text-3xl font-black text-blue-600">
-                    {calves.filter(c => c.status === 'active').length}
+                    {protocolCounts[p.name] || 0}
                   </div>
                   <div className="text-[10px] font-black text-slate-400 uppercase">{p.name}</div>
-                </div>
+                </button>
               ))}
             </div>
-            <button onClick={() => setCurrentPage('feed')} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black tracking-widest text-sm">
-              VIEW FEEDING LIST
+            <button onClick={() => { setFilterProtocol('all'); setCurrentPage('feed'); }} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black tracking-widest text-sm">
+              VIEW ALL CALVES
             </button>
           </div>
         ) : (
           <div className="space-y-4">
-            <button onClick={() => setCurrentPage('dashboard')} className="flex items-center text-blue-600 font-bold text-xs uppercase"><ChevronLeft size={14}/> Back</button>
-            {calves.map(calf => (
-              <div key={calf.id} className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm">
-                <h3 className="text-2xl font-black italic">#{calf.number}</h3>
-                <p className="text-[10px] font-bold text-slate-400 uppercase mb-4">{getCalfAge(calf.birth_date)} Days Old</p>
-                <div className="grid grid-cols-5 gap-2">
-                  {[0, 25, 50, 75, 100].map(pct => (
-                    <button key={pct} className="py-5 bg-slate-50 rounded-2xl font-black text-slate-300 active:bg-blue-600 active:text-white transition-all">{pct}%</button>
-                  ))}
-                </div>
+            <div className="flex justify-between items-center mb-4">
+              <button onClick={() => setCurrentPage('dashboard')} className="flex items-center text-blue-600 font-bold text-xs uppercase"><ChevronLeft size={14}/> Back</button>
+              <div className="flex gap-2 overflow-x-auto">
+                <button onClick={() => setFilterProtocol('all')} className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${filterProtocol === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>All</button>
+                {protocols.map(p => (
+                  <button key={p.id} onClick={() => setFilterProtocol(p.name)} className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${filterProtocol === p.name ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>
+                    {p.name}
+                  </button>
+                ))}
               </div>
-            ))}
+            </div>
+            {filteredCalves.map(calf => {
+              const recentFeedings = getCalfFeedings(calf.number, 3);
+              const todayFeeding = getTodayFeeding(calf.number);
+              const protocol = getProtocolStatus(calf);
+
+              return (
+                <div key={calf.id} className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <h3 className="text-2xl font-black italic">#{calf.number}{calf.name && ` (${calf.name})`}</h3>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">{getCalfAge(calf.birth_date)} Days • {protocol}</p>
+                    </div>
+                  </div>
+
+                  {/* Last 3 Feedings */}
+                  <div className="flex gap-2 mb-4">
+                    {recentFeedings.map((f, i) => {
+                      let color = 'bg-green-500';
+                      if (f.consumption < 50) color = 'bg-red-500';
+                      else if (f.consumption < 75) color = 'bg-yellow-500';
+                      return (
+                        <div key={i} className={`${color} text-white px-2 py-1 rounded-lg text-xs font-bold`}>
+                          {f.consumption}%
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Last feeding notes */}
+                  {recentFeedings.length > 0 && recentFeedings[recentFeedings.length - 1]?.notes && (
+                    <div className="bg-yellow-50 p-3 rounded-2xl mb-4 text-xs">
+                      📝 {recentFeedings[recentFeedings.length - 1].notes}
+                    </div>
+                  )}
+
+                  {/* Today's Feeding Buttons */}
+                  <div className="mb-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase mb-2">Today's Feeding:</div>
+                    <div className="grid grid-cols-5 gap-2">
+                      {[0, 25, 50, 75, 100].map(pct => (
+                        <button 
+                          key={pct}
+                          onClick={() => recordFeeding(calf.number, pct)}
+                          className={`py-5 rounded-2xl font-black transition-all ${
+                            todayFeeding?.consumption === pct 
+                              ? 'bg-blue-600 text-white' 
+                              : 'bg-slate-50 text-slate-300 active:bg-blue-600 active:text-white'
+                          }`}>
+                          {pct}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  <textarea
+                    placeholder="Notes..."
+                    value={todayFeeding?.notes || ''}
+                    onChange={(e) => updateFeedingNotes(calf.number, e.target.value)}
+                    className="w-full p-3 bg-slate-50 rounded-2xl text-sm mb-2 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    rows="2"
+                  />
+
+                  {/* Treatment Checkbox */}
+                  <label className="flex items-center text-xs font-bold">
+                    <input
+                      type="checkbox"
+                      checked={todayFeeding?.treatment || false}
+                      onChange={() => toggleTreatment(calf.number)}
+                      className="mr-2"
+                    />
+                    Treatment Given
+                  </label>
+                </div>
+              );
+            })}
           </div>
         )}
       </main>
@@ -205,19 +422,45 @@ export default function CalfTracker() {
                     )}
                   </div>
                 ))}
-                <div className="p-2 flex gap-2">
-                   <input id="newU" type="text" placeholder="Add Staff..." className="flex-1 bg-white p-3 rounded-xl text-sm font-bold border border-slate-200" />
-                   <button onClick={async () => {
-                     const i = document.getElementById('newU');
-                     if(i.value.trim()){ await supabase.from('users').insert([{name: i.value.trim(), role:'user'}]); i.value=''; loadAllData(); }
-                   }} className="bg-slate-900 text-white px-4 rounded-xl font-black text-[10px] uppercase">Add</button>
-                </div>
+                <button onClick={() => setShowAddUser(true)} className="w-full p-4 bg-slate-900 text-white rounded-2xl font-bold text-xs uppercase">
+                  + Add Team Member
+                </button>
               </div>
             </section>
           </div>
           
           <div className="p-6 border-t bg-white">
             <button onClick={() => setShowSettings(false)} className="w-full bg-blue-600 text-white py-5 rounded-[2rem] font-black shadow-lg">CLOSE & SAVE</button>
+          </div>
+        </div>
+      )}
+
+      {/* ADD USER MODAL */}
+      {showAddUser && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-md z-[110] flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-sm p-8 space-y-6 shadow-2xl">
+            <h2 className="text-2xl font-black italic">ADD TEAM MEMBER</h2>
+            <div className="space-y-4 text-left">
+              <input 
+                type="text" 
+                placeholder="Name" 
+                value={newUser.name} 
+                onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} 
+                className="w-full p-5 bg-slate-50 rounded-3xl font-bold border focus:outline-none" 
+              />
+              <select 
+                value={newUser.role} 
+                onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                className="w-full p-5 bg-slate-50 rounded-3xl font-bold border focus:outline-none"
+              >
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-2">
+              <button onClick={addUser} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black">ADD USER</button>
+              <button onClick={() => { setShowAddUser(false); setNewUser({ name: '', role: 'user' }); }} className="w-full py-4 text-slate-400 font-black text-xs uppercase">Cancel</button>
+            </div>
           </div>
         </div>
       )}
