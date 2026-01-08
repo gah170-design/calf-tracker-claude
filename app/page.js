@@ -260,7 +260,20 @@ export default function CalfTracker() {
       filtered = filtered.filter(c => getProtocolStatus(c) === filterProtocol);
     }
     
-    return filtered.sort((a, b) => new Date(a.birth_date) - new Date(b.birth_date));
+    return filtered.sort((a, b) => new Date(b.birth_date) - new Date(a.birth_date)); // Newest first
+  };
+
+  const shouldFlagCalf = (calf) => {
+    const recentFeedings = getCalfFeedings(calf.number, 2);
+    if (recentFeedings.length < 2) return false;
+    
+    // Flag if last 2 feedings are 50% or below
+    return recentFeedings.every(f => f.consumption <= 50);
+  };
+
+  const getFlaggedCalves = () => {
+    return calves.filter(c => c.status === 'active' && shouldFlagCalf(c))
+      .sort((a, b) => new Date(b.birth_date) - new Date(a.birth_date));
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center font-black">LOADING...</div>;
@@ -314,7 +327,8 @@ export default function CalfTracker() {
   }
 
   const protocolCounts = getProtocolCounts();
-  const filteredCalves = getFilteredCalves();
+  const filteredCalves = currentPage === 'flagged' ? getFlaggedCalves() : getFilteredCalves();
+  const flaggedCount = getFlaggedCalves().length;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -337,6 +351,17 @@ export default function CalfTracker() {
       <main className="p-4 flex-1">
         {currentPage === 'dashboard' ? (
           <div className="space-y-4">
+            {flaggedCount > 0 && (
+              <div className="bg-red-500 text-white p-4 rounded-[2rem] flex justify-between items-center cursor-pointer"
+                onClick={() => setCurrentPage('flagged')}>
+                <div>
+                  <div className="font-black text-2xl">{flaggedCount}</div>
+                  <div className="text-xs font-bold opacity-90 uppercase">Calves Need Attention</div>
+                </div>
+                <div className="text-3xl">⚠️</div>
+              </div>
+            )}
+            
             <div className="grid grid-cols-2 gap-3">
               {protocols.map(p => (
                 <button key={p.id} onClick={() => { setFilterProtocol(p.name); setCurrentPage('feed'); }}
@@ -356,22 +381,28 @@ export default function CalfTracker() {
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-4">
               <button onClick={() => setCurrentPage('dashboard')} className="flex items-center text-blue-600 font-bold text-xs uppercase"><ChevronLeft size={14}/> Back</button>
-              <div className="flex gap-2 overflow-x-auto">
-                <button onClick={() => setFilterProtocol('all')} className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${filterProtocol === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>All</button>
-                {protocols.map(p => (
-                  <button key={p.id} onClick={() => setFilterProtocol(p.name)} className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${filterProtocol === p.name ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>
-                    {p.name}
-                  </button>
-                ))}
-              </div>
+              {currentPage === 'feed' && (
+                <div className="flex gap-2 overflow-x-auto">
+                  <button onClick={() => setFilterProtocol('all')} className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${filterProtocol === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>All</button>
+                  {protocols.map(p => (
+                    <button key={p.id} onClick={() => setFilterProtocol(p.name)} className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${filterProtocol === p.name ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {currentPage === 'flagged' && (
+                <div className="text-xs font-black text-red-500 uppercase">⚠️ Flagged Calves</div>
+              )}
             </div>
             {filteredCalves.map(calf => {
               const recentFeedings = getCalfFeedings(calf.number, 3);
               const todayFeeding = getTodayFeeding(calf.number);
               const protocol = getProtocolStatus(calf);
+              const isFlagged = shouldFlagCalf(calf);
 
               return (
-                <div key={calf.id} className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                <div key={calf.id} className={`bg-white p-6 rounded-[2.5rem] shadow-sm ${isFlagged ? 'border-4 border-red-500' : 'border border-slate-100'}`}>
                   <div className="flex justify-between items-start mb-2">
                     <div>
                       <h3 className="text-2xl font-black italic">#{calf.number}{calf.name && ` (${calf.name})`}</h3>
