@@ -20,6 +20,9 @@ export default function CalfTracker() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAddCalf, setShowAddCalf] = useState(false);
   const [showAddUser, setShowAddUser] = useState(false);
+  const [showPinEntry, setShowPinEntry] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [pinInput, setPinInput] = useState('');
   const [filterProtocol, setFilterProtocol] = useState('all');
   const [settings, setSettings] = useState({ nextCalfNumber: 1000 });
   const [newCalf, setNewCalf] = useState({ name: '', birthDate: new Date().toISOString().slice(0, 16) });
@@ -28,11 +31,24 @@ export default function CalfTracker() {
 
   useEffect(() => {
     const init = async () => {
+      await loadAllData();
+      
       if (typeof window !== 'undefined') {
         const stored = localStorage.getItem('calfTrackerUser');
-        if (stored) setCurrentUser(JSON.parse(stored));
+        if (stored) {
+          const storedData = JSON.parse(stored);
+          // Auto-login with stored PIN
+          const user = users.find(u => u.name === storedData.name);
+          if (user && user.pin === storedData.pin) {
+            setCurrentUser(user);
+          } else {
+            // PIN mismatch - clear storage and require re-login
+            localStorage.removeItem('calfTrackerUser');
+            alert('Access revoked. Please contact administrator.');
+          }
+        }
       }
-      await loadAllData();
+      
       setLoading(false);
     };
     init();
@@ -86,9 +102,35 @@ export default function CalfTracker() {
 
   const addUser = async () => {
     if (!newUser.name.trim()) return;
-    await supabase.from('users').insert([{ name: newUser.name.trim(), role: newUser.role }]);
+    await supabase.from('users').insert([{ name: newUser.name.trim(), role: newUser.role, pin: null }]);
     setNewUser({ name: '', role: 'user' });
     setShowAddUser(false);
+    await loadAllData();
+  };
+
+  const handleUserSelect = (user) => {
+    if (!user.pin) {
+      alert('No PIN set for this user. Contact administrator.');
+      return;
+    }
+    setSelectedUser(user);
+    setShowPinEntry(true);
+  };
+
+  const verifyPin = () => {
+    if (pinInput === selectedUser.pin) {
+      setCurrentUser(selectedUser);
+      localStorage.setItem('calfTrackerUser', JSON.stringify({ name: selectedUser.name, pin: selectedUser.pin }));
+      setShowPinEntry(false);
+      setPinInput('');
+    } else {
+      alert('Incorrect PIN');
+      setPinInput('');
+    }
+  };
+
+  const updateUserPin = async (userId, newPin) => {
+    await supabase.from('users').update({ pin: newPin }).eq('id', userId);
     await loadAllData();
   };
 
@@ -230,13 +272,43 @@ export default function CalfTracker() {
           <h1 className="font-black mb-6 uppercase italic tracking-widest">Select Operator</h1>
           <div className="space-y-3">
             {users.map(u => (
-              <button key={u.id} onClick={() => { setCurrentUser(u); localStorage.setItem('calfTrackerUser', JSON.stringify(u)); }}
+              <button key={u.id} onClick={() => handleUserSelect(u)}
                 className="w-full p-5 bg-slate-900 text-white rounded-2xl font-bold uppercase text-xs">
                 {u.name}
               </button>
             ))}
           </div>
         </div>
+
+        {/* PIN Entry Modal */}
+        {showPinEntry && (
+          <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-[3rem] w-full max-w-sm p-8 space-y-6 shadow-2xl">
+              <h2 className="text-2xl font-black italic text-center">ENTER PIN</h2>
+              <p className="text-center text-sm font-bold text-slate-600">{selectedUser?.name}</p>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength="4"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ''))}
+                onKeyPress={(e) => e.key === 'Enter' && verifyPin()}
+                placeholder="••••"
+                className="w-full p-6 bg-slate-50 rounded-3xl font-black text-center text-2xl tracking-widest border-2 focus:outline-none focus:border-blue-600"
+                autoFocus
+              />
+              <div className="flex flex-col gap-2">
+                <button onClick={verifyPin} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black">
+                  UNLOCK
+                </button>
+                <button onClick={() => { setShowPinEntry(false); setSelectedUser(null); setPinInput(''); }}
+                  className="w-full py-4 text-slate-400 font-black text-xs uppercase">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -422,12 +494,32 @@ export default function CalfTracker() {
               <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Team Access</h3>
               <div className="bg-slate-50 p-2 rounded-3xl space-y-1">
                 {users.map(u => (
-                  <div key={u.id} className="bg-white p-4 rounded-2xl flex justify-between items-center shadow-sm">
-                    <div className="font-bold text-sm">{u.name} <span className="text-[10px] opacity-40 uppercase ml-1">({u.role})</span></div>
-                    {u.id !== currentUser.id && (
-                      <button onClick={async () => { if(confirm(`Delete ${u.name}?`)) { await supabase.from('users').delete().eq('id', u.id); loadAllData(); } }}
-                        className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
-                    )}
+                  <div key={u.id} className="bg-white p-4 rounded-2xl shadow-sm">
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="font-bold text-sm">{u.name} <span className="text-[10px] opacity-40 uppercase ml-1">({u.role})</span></div>
+                      {u.id !== currentUser.id && (
+                        <button onClick={async () => { if(confirm(`Delete ${u.name}?`)) { await supabase.from('users').delete().eq('id', u.id); loadAllData(); } }}
+                          className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength="4"
+                        placeholder={u.pin ? '••••' : 'No PIN'}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '');
+                          if (val.length === 4) {
+                            updateUserPin(u.id, val);
+                            e.target.value = '';
+                            e.target.placeholder = '••••';
+                          }
+                        }}
+                        className="flex-1 p-2 bg-slate-50 rounded-xl text-sm font-bold text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <span className="text-[10px] text-slate-400">Set 4-digit PIN</span>
+                    </div>
                   </div>
                 ))}
                 <button onClick={() => setShowAddUser(true)} className="w-full p-4 bg-slate-900 text-white rounded-2xl font-bold text-xs uppercase">
