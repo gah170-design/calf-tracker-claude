@@ -400,6 +400,7 @@ export default function CalfTracker() {
               const todayFeeding = getTodayFeeding(calf.number);
               const protocol = getProtocolStatus(calf);
               const isFlagged = shouldFlagCalf(calf);
+              const now = new Date();
 
               return (
                 <div key={calf.id} className={`bg-white p-6 rounded-[2.5rem] shadow-sm ${isFlagged ? 'border-4 border-red-500' : 'border border-slate-100'}`}>
@@ -416,9 +417,14 @@ export default function CalfTracker() {
                       let color = 'bg-green-500';
                       if (f.consumption < 50) color = 'bg-red-500';
                       else if (f.consumption < 75) color = 'bg-yellow-500';
+                      
+                      const feedDate = new Date(f.timestamp);
+                      const dateStr = feedDate.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+                      
                       return (
                         <div key={i} className={`${color} text-white px-2 py-1 rounded-lg text-xs font-bold`}>
-                          {f.consumption}%
+                          <div>{f.consumption}%</div>
+                          <div className="text-[8px] opacity-80">{dateStr} {f.period}</div>
                         </div>
                       );
                     })}
@@ -433,7 +439,9 @@ export default function CalfTracker() {
 
                   {/* Today's Feeding Buttons */}
                   <div className="mb-3">
-                    <div className="text-[10px] font-bold text-slate-400 uppercase mb-2">Today's Feeding:</div>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase mb-2">
+                      {now.getHours() < 12 ? 'AM' : 'PM'} Feeding:
+                    </div>
                     <div className="grid grid-cols-5 gap-2">
                       {[0, 25, 50, 75, 100].map(pct => (
                         <button 
