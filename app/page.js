@@ -32,27 +32,29 @@ export default function CalfTracker() {
   useEffect(() => {
     const init = async () => {
       await loadAllData();
-      
-      if (typeof window !== 'undefined') {
-        const stored = localStorage.getItem('calfTrackerUser');
-        if (stored) {
-          const storedData = JSON.parse(stored);
-          // Auto-login with stored PIN
-          const user = users.find(u => u.name === storedData.name);
-          if (user && user.pin === storedData.pin) {
-            setCurrentUser(user);
-          } else {
-            // PIN mismatch - clear storage and require re-login
-            localStorage.removeItem('calfTrackerUser');
-            alert('Access revoked. Please contact administrator.');
-          }
-        }
-      }
-      
       setLoading(false);
     };
     init();
   }, []);
+
+  useEffect(() => {
+    // Check stored PIN after users are loaded
+    if (users.length > 0 && !currentUser && typeof window !== 'undefined') {
+      const stored = localStorage.getItem('calfTrackerUser');
+      if (stored) {
+        const storedData = JSON.parse(stored);
+        const user = users.find(u => u.name === storedData.name);
+        if (user && user.pin === storedData.pin) {
+          setCurrentUser(user);
+        } else {
+          localStorage.removeItem('calfTrackerUser');
+          if (user) {
+            alert('Access revoked. Please contact administrator.');
+          }
+        }
+      }
+    }
+  }, [users]);
 
   const loadAllData = async () => {
     try {
@@ -241,6 +243,19 @@ export default function CalfTracker() {
     );
   };
 
+  const getCurrentPeriodFeeding = (calfNumber) => {
+    // Only return feeding for CURRENT period (AM before noon, PM after noon)
+    const now = new Date();
+    const currentPeriod = now.getHours() < 12 ? 'AM' : 'PM';
+    const today = now.toISOString().slice(0, 10);
+    
+    return feedings.find(
+      f => f.calf_number === calfNumber && 
+           f.timestamp.startsWith(today) && 
+           f.period === currentPeriod
+    );
+  };
+
   const getProtocolCounts = () => {
     const counts = {};
     protocols.forEach(p => counts[p.name] = 0);
@@ -398,6 +413,7 @@ export default function CalfTracker() {
             {filteredCalves.map(calf => {
               const recentFeedings = getCalfFeedings(calf.number, 3);
               const todayFeeding = getTodayFeeding(calf.number);
+              const currentPeriodFeeding = getCurrentPeriodFeeding(calf.number);
               const protocol = getProtocolStatus(calf);
               const isFlagged = shouldFlagCalf(calf);
               const now = new Date();
@@ -448,7 +464,7 @@ export default function CalfTracker() {
                           key={pct}
                           onClick={() => recordFeeding(calf.number, pct)}
                           className={`py-5 rounded-2xl font-black transition-all ${
-                            todayFeeding?.consumption === pct 
+                            currentPeriodFeeding?.consumption === pct 
                               ? 'bg-blue-600 text-white' 
                               : 'bg-slate-50 text-slate-300 active:bg-blue-600 active:text-white'
                           }`}>
