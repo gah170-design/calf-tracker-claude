@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, Filter } from 'lucide-react';
+import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, Save, Trash2, Users, ListChecks, Hash } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -65,7 +65,7 @@ export default function CalfTracker() {
     } catch (err) { console.error(err); }
   };
 
-  const saveSettings = async (key, val) => {
+  const saveGlobalSetting = async (key, val) => {
     setSettings(prev => ({ ...prev, [key]: val }));
     const dbKey = key.replace(/[A-Z]/g, l => `_${l.toLowerCase()}`);
     await supabase.from('settings').update({ setting_value: val.toString() }).eq('setting_key', dbKey);
@@ -90,13 +90,13 @@ export default function CalfTracker() {
       number: dbNumberValue,
       bull_number: bullNumber,
       name: newCalf.name.trim() || null,
-      birth_date: newCalf.birth_date || newCalf.birthDate,
+      birth_date: newCalf.birthDate,
       status: 'active',
       type: newCalf.isBull ? 'bull' : 'heifer'
     }]);
     if (!error) {
-      if (newCalf.isBull) await saveSettings('nextBullNumber', settings.nextBullNumber + 1);
-      else if (dbNumberValue === settings.nextCalfNumber) await saveSettings('nextCalfNumber', settings.nextCalfNumber + 1);
+      if (newCalf.isBull) await saveGlobalSetting('nextBullNumber', settings.nextBullNumber + 1);
+      else if (dbNumberValue === settings.nextCalfNumber) await saveGlobalSetting('nextCalfNumber', settings.nextCalfNumber + 1);
       setShowAddCalf(false);
       setNewCalf({ name: '', birthDate: getETDate().toISOString().slice(0, 16), isBull: false });
       await loadAllData();
@@ -158,7 +158,7 @@ export default function CalfTracker() {
     return "Finished";
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center font-black">LOADING...</div>;
+  if (loading) return <div className="h-screen flex items-center justify-center font-black uppercase italic text-blue-600">Syncing Farm Data...</div>;
 
   const activeHeifers = calves.filter(c => c.status === 'active' && c.type !== 'bull');
   const activeBulls = calves.filter(c => c.status === 'active' && c.type === 'bull');
@@ -198,7 +198,7 @@ export default function CalfTracker() {
               <h1 className="font-black text-2xl italic tracking-tighter uppercase">Calf Tracker</h1>
               <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">{currentUser.name} • {getETDate().getHours() < 12 ? 'AM' : 'PM'} Shift</p>
             </div>
-            <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full"><Settings size={20}/></button>
+            <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full active:scale-90 transition-transform"><Settings size={20}/></button>
           </header>
 
           <main className="p-4 max-w-2xl mx-auto space-y-4">
@@ -240,9 +240,8 @@ export default function CalfTracker() {
             ) : (
               <div className="space-y-4">
                 <div className="flex flex-col gap-4">
-                    <button onClick={() => { setCurrentPage('dashboard'); setFilterProtocol('all'); }} className="flex items-center text-blue-600 font-black text-xs uppercase bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16}/> Back to Dashboard</button>
+                    <button onClick={() => { setCurrentPage('dashboard'); setFilterProtocol('all'); }} className="flex items-center text-blue-600 font-black text-xs uppercase bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16}/> Back</button>
                     
-                    {/* NEW: Protocol Quick Menu */}
                     {currentPage !== 'flagged' && currentPage !== 'bulls' && (
                         <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
                             <button 
@@ -268,7 +267,6 @@ export default function CalfTracker() {
                    currentPage === 'flagged' ? flaggedCalves : 
                    (filterProtocol === 'all' ? activeHeifers : activeHeifers.filter(c => getProtocolStatus(c) === filterProtocol))
                   )
-                  // FIXED: Strict Sorting by Number to prevent jumping
                   .sort((a, b) => (b.bull_number ? parseInt(b.bull_number.replace(/\D/g,'')) : b.number) - (a.bull_number ? parseInt(a.bull_number.replace(/\D/g,'')) : a.number))
                   .map(calf => (
                     <CalfCard 
@@ -294,14 +292,96 @@ export default function CalfTracker() {
         </>
       )}
 
-      {/* FOOTER BUTTON REMAINED SAME */}
+      {/* FULL SETTINGS PANEL RESTORED */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-white z-[100] flex flex-col overflow-y-auto pb-10">
+          <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
+            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Farm Settings</h2>
+            <button onClick={() => { setShowSettings(false); loadAllData(); }} className="p-3 bg-slate-200 rounded-full"><X size={24}/></button>
+          </div>
+
+          <div className="p-6 space-y-10">
+            {/* NEXT NUMBERS */}
+            <section className="space-y-4">
+                <div className="flex items-center gap-2 text-blue-600 font-black uppercase text-xs tracking-widest"><Hash size={16}/> Counter Control</div>
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase">Next Heifer #</label>
+                        <input type="number" value={settings.nextCalfNumber} onChange={(e) => saveGlobalSetting('nextCalfNumber', e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl font-black text-xl border-0 focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase">Next Bull #</label>
+                        <input type="number" value={settings.nextBullNumber} onChange={(e) => saveGlobalSetting('nextBullNumber', e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl font-black text-xl border-0 focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                </div>
+            </section>
+
+            {/* PROTOCOLS EDITOR */}
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
+                 <div className="flex items-center gap-2 text-blue-600 font-black uppercase text-xs tracking-widest"><ListChecks size={16}/> Feeding Protocols</div>
+                 <button onClick={() => {
+                    const name = prompt("Protocol Name (e.g. Bottles)");
+                    if(name) supabase.from('protocols').insert([{name, type:'feedings', value: 4, order: protocols.length}]).then(() => loadAllData());
+                 }} className="p-2 bg-blue-50 text-blue-600 rounded-xl"><Plus size={18}/></button>
+              </div>
+              <div className="space-y-3">
+                {protocols.map(p => (
+                   <div key={p.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-4">
+                      <div className="flex-1">
+                         <input defaultValue={p.name} onBlur={(e) => supabase.from('protocols').update({name: e.target.value}).eq('id', p.id)} className="font-black uppercase text-slate-800 bg-transparent border-0 p-0 text-sm w-full" />
+                         <div className="flex items-center gap-2 mt-1">
+                            <input type="number" defaultValue={p.value} onBlur={(e) => supabase.from('protocols').update({value: e.target.value}).eq('id', p.id)} className="w-12 bg-white border rounded p-1 text-[10px] font-bold" />
+                            <select defaultValue={p.type} onChange={(e) => supabase.from('protocols').update({type: e.target.value}).eq('id', p.id)} className="bg-white border rounded p-1 text-[10px] font-bold">
+                               <option value="feedings">Feedings</option>
+                               <option value="days">Days Old</option>
+                            </select>
+                         </div>
+                      </div>
+                      <button onClick={() => {if(confirm("Delete protocol?")) supabase.from('protocols').delete().eq('id', p.id).then(() => loadAllData())}} className="text-red-300 active:text-red-500"><Trash2 size={18}/></button>
+                   </div>
+                ))}
+              </div>
+            </section>
+
+            {/* USERS EDITOR */}
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-blue-600 font-black uppercase text-xs tracking-widest"><Users size={16}/> Farm Crew</div>
+                <button onClick={() => {
+                    const name = prompt("Full Name");
+                    const pin = prompt("4-Digit PIN");
+                    if(name && pin) supabase.from('users').insert([{name, pin}]).then(() => loadAllData());
+                }} className="p-2 bg-blue-50 text-blue-600 rounded-xl"><Plus size={18}/></button>
+              </div>
+              <div className="space-y-3">
+                {users.map(u => (
+                   <div key={u.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
+                      <div>
+                        <div className="font-black text-slate-800">{u.name}</div>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PIN: {u.pin}</div>
+                      </div>
+                      <button onClick={() => {if(confirm("Remove user?")) supabase.from('users').delete().eq('id', u.id).then(() => loadAllData())}} className="text-red-300 active:text-red-500"><Trash2 size={18}/></button>
+                   </div>
+                ))}
+              </div>
+            </section>
+
+            <button onClick={() => { setCurrentUser(null); setShowSettings(false); setCurrentPage('dashboard'); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black flex items-center justify-center gap-3 active:bg-red-100 uppercase tracking-tighter">
+              <LogOut size={20}/> Logout & Switch User
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* FOOTER BUTTON */}
       <div className="fixed bottom-0 left-0 right-0 p-6 flex justify-center z-30 pointer-events-none">
         <button onClick={() => setShowAddCalf(true)} className="bg-slate-900 text-white w-full max-w-xs py-5 rounded-[2.5rem] font-black shadow-2xl flex items-center justify-center gap-3 pointer-events-auto active:scale-95 transition-transform">
           <Plus size={24}/> ADD NEW CALF
         </button>
       </div>
 
-      {/* MODALS REMAINED SAME */}
+      {/* ADD CALF MODAL */}
       {showAddCalf && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] p-8 w-full max-w-sm space-y-6 shadow-2xl">
@@ -323,6 +403,7 @@ export default function CalfTracker() {
         </div>
       )}
 
+      {/* LOGS MODAL */}
       {selectedCalfHistory && (
         <div className="fixed inset-0 bg-white z-[100] flex flex-col">
           <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0">
@@ -340,20 +421,6 @@ export default function CalfTracker() {
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{new Date(f.timestamp).toLocaleDateString()} • {f.period} by {f.user_name}</p>
                </div>
              ))}
-          </div>
-        </div>
-      )}
-
-      {showSettings && (
-        <div className="fixed inset-0 bg-white z-[100] flex flex-col p-6">
-          <div className="flex justify-between items-center mb-10">
-            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Settings</h2>
-            <button onClick={() => setShowSettings(false)} className="p-3 bg-slate-100 rounded-full"><X size={24}/></button>
-          </div>
-          <div className="space-y-4">
-            <button onClick={() => { setCurrentUser(null); setShowSettings(false); setCurrentPage('dashboard'); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black flex items-center justify-center gap-3 active:bg-red-100 uppercase">
-              <LogOut size={20}/> Logout / Switch User
-            </button>
           </div>
         </div>
       )}
@@ -396,7 +463,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
               <div className="text-blue-600">{f.period}</div>
             </div>
           </div>
-        )) : <div className="col-span-3 py-2 border-2 border-dashed border-slate-50 rounded-xl" />}
+        )) : <div className="col-span-3 py-2 border-2 border-dashed border-slate-50 rounded-xl text-center text-[8px] font-black text-slate-200 uppercase tracking-widest flex items-center justify-center italic">No Feedings</div>}
       </div>
 
       <div className="flex gap-2 items-center mb-6">
@@ -409,7 +476,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
         />
         <button 
           onClick={() => setTreatmentValue(!displayTreatment)}
-          className={`p-3 rounded-xl border-2 transition-all flex items-center gap-2 font-black text-[10px] uppercase ${displayTreatment ? 'bg-red-500 border-red-500 text-white' : 'bg-white border-slate-100 text-slate-400'}`}
+          className={`p-3 rounded-xl border-2 transition-all flex items-center gap-2 font-black text-[10px] uppercase ${displayTreatment ? 'bg-red-500 border-red-500 text-white shadow-md' : 'bg-white border-slate-100 text-slate-400'}`}
         >
           <ClipboardCheck size={16}/> {displayTreatment ? 'Treated' : 'Treat?'}
         </button>
@@ -422,7 +489,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
             <button 
               key={pct} 
               onClick={() => onRecord(pct)} 
-              className={`py-5 rounded-2xl font-black text-sm transition-all shadow-sm ${todayFeeding?.consumption === pct ? 'bg-blue-600 text-white ring-4 ring-blue-100' : 'bg-slate-50 text-slate-300 active:bg-slate-100'}`}
+              className={`py-5 rounded-2xl font-black text-sm transition-all shadow-sm ${todayFeeding?.consumption === pct ? 'bg-blue-600 text-white ring-4 ring-blue-100 scale-95' : 'bg-slate-50 text-slate-300 active:bg-slate-100 active:scale-95'}`}
             >
               {pct}%
             </button>
