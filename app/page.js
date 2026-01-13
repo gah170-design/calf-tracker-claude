@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut } from 'lucide-react';
+import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, Filter } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -90,7 +90,7 @@ export default function CalfTracker() {
       number: dbNumberValue,
       bull_number: bullNumber,
       name: newCalf.name.trim() || null,
-      birth_date: newCalf.birthDate,
+      birth_date: newCalf.birth_date || newCalf.birthDate,
       status: 'active',
       type: newCalf.isBull ? 'bull' : 'heifer'
     }]);
@@ -135,9 +135,7 @@ export default function CalfTracker() {
       error = err;
     }
 
-    if (error) {
-      alert("Feeding Record Error: " + error.message);
-    } else {
+    if (!error) {
       setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
       setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
       await loadAllData();
@@ -241,12 +239,37 @@ export default function CalfTracker() {
               </div>
             ) : (
               <div className="space-y-4">
-                <button onClick={() => { setCurrentPage('dashboard'); setFilterProtocol('all'); }} className="flex items-center text-blue-600 font-black text-xs uppercase mb-2 bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16}/> Back</button>
+                <div className="flex flex-col gap-4">
+                    <button onClick={() => { setCurrentPage('dashboard'); setFilterProtocol('all'); }} className="flex items-center text-blue-600 font-black text-xs uppercase bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16}/> Back to Dashboard</button>
+                    
+                    {/* NEW: Protocol Quick Menu */}
+                    {currentPage !== 'flagged' && currentPage !== 'bulls' && (
+                        <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                            <button 
+                                onClick={() => setFilterProtocol('all')}
+                                className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
+                            >
+                                All Heifers
+                            </button>
+                            {protocols.map(p => (
+                                <button 
+                                    key={p.id}
+                                    onClick={() => setFilterProtocol(p.name)}
+                                    className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === p.name ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
+                                >
+                                    {p.name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
                 
                 {(currentPage === 'bulls' ? activeBulls : 
                    currentPage === 'flagged' ? flaggedCalves : 
                    (filterProtocol === 'all' ? activeHeifers : activeHeifers.filter(c => getProtocolStatus(c) === filterProtocol))
                   )
+                  // FIXED: Strict Sorting by Number to prevent jumping
+                  .sort((a, b) => (b.bull_number ? parseInt(b.bull_number.replace(/\D/g,'')) : b.number) - (a.bull_number ? parseInt(a.bull_number.replace(/\D/g,'')) : a.number))
                   .map(calf => (
                     <CalfCard 
                       key={calf.id} 
@@ -271,26 +294,14 @@ export default function CalfTracker() {
         </>
       )}
 
-      {showSettings && (
-        <div className="fixed inset-0 bg-white z-[100] flex flex-col p-6">
-          <div className="flex justify-between items-center mb-10">
-            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Settings</h2>
-            <button onClick={() => setShowSettings(false)} className="p-3 bg-slate-100 rounded-full"><X size={24}/></button>
-          </div>
-          <div className="space-y-4">
-            <button onClick={() => { setCurrentUser(null); setShowSettings(false); setCurrentPage('dashboard'); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black flex items-center justify-center gap-3 active:bg-red-100 uppercase">
-              <LogOut size={20}/> Logout / Switch User
-            </button>
-          </div>
-        </div>
-      )}
-
+      {/* FOOTER BUTTON REMAINED SAME */}
       <div className="fixed bottom-0 left-0 right-0 p-6 flex justify-center z-30 pointer-events-none">
         <button onClick={() => setShowAddCalf(true)} className="bg-slate-900 text-white w-full max-w-xs py-5 rounded-[2.5rem] font-black shadow-2xl flex items-center justify-center gap-3 pointer-events-auto active:scale-95 transition-transform">
           <Plus size={24}/> ADD NEW CALF
         </button>
       </div>
 
+      {/* MODALS REMAINED SAME */}
       {showAddCalf && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] p-8 w-full max-w-sm space-y-6 shadow-2xl">
@@ -332,6 +343,20 @@ export default function CalfTracker() {
           </div>
         </div>
       )}
+
+      {showSettings && (
+        <div className="fixed inset-0 bg-white z-[100] flex flex-col p-6">
+          <div className="flex justify-between items-center mb-10">
+            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Settings</h2>
+            <button onClick={() => setShowSettings(false)} className="p-3 bg-slate-100 rounded-full"><X size={24}/></button>
+          </div>
+          <div className="space-y-4">
+            <button onClick={() => { setCurrentUser(null); setShowSettings(false); setCurrentPage('dashboard'); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black flex items-center justify-center gap-3 active:bg-red-100 uppercase">
+              <LogOut size={20}/> Logout / Switch User
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -366,7 +391,6 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
             <div className={`w-full py-2 rounded-xl text-center text-white text-[9px] font-black shadow-sm ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>
               {f.consumption}%
             </div>
-            {/* LARGE FONT LABELS */}
             <div className="text-[11px] font-black text-slate-600 uppercase mt-1 tracking-tight text-center leading-tight">
               <div>{new Date(f.timestamp).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})}</div>
               <div className="text-blue-600">{f.period}</div>
