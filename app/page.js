@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, Save, Trash2, Users, ListChecks, Hash, Edit3 } from 'lucide-react';
+import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, Save, Trash2, Users, ListChecks, Hash, Edit3, BarChart3 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -274,14 +274,13 @@ export default function CalfTracker() {
         </>
       )}
 
-      {/* FULL SETTINGS PANEL */}
+      {/* MODALS: SETTINGS, ADD CALF, AND ENHANCED HISTORY WITH GRAPH */}
       {showSettings && (
         <div className="fixed inset-0 bg-white z-[100] flex flex-col overflow-y-auto pb-10">
           <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
             <h2 className="text-3xl font-black italic uppercase tracking-tighter">Farm Settings</h2>
             <button onClick={() => { setShowSettings(false); loadAllData(); }} className="p-3 bg-slate-200 rounded-full"><X size={24}/></button>
           </div>
-
           <div className="p-6 space-y-10">
             {/* COUNTERS */}
             <section className="space-y-4">
@@ -297,7 +296,6 @@ export default function CalfTracker() {
                     </div>
                 </div>
             </section>
-
             {/* PROTOCOLS */}
             <section className="space-y-4">
               <div className="flex items-center justify-between">
@@ -325,8 +323,7 @@ export default function CalfTracker() {
                 ))}
               </div>
             </section>
-
-            {/* USER MANAGEMENT (ENHANCED) */}
+            {/* USERS */}
             <section className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-blue-600 font-black uppercase text-xs tracking-widest"><Users size={16}/> Farm Crew</div>
@@ -340,26 +337,17 @@ export default function CalfTracker() {
                 {users.map(u => (
                    <div key={u.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between group">
                       <div className="flex-1">
-                        <input 
-                           defaultValue={u.name} 
-                           className="font-black text-slate-800 bg-transparent border-none p-0 outline-none w-full"
-                           onBlur={(e) => supabase.from('users').update({name: e.target.value}).eq('id', u.id)}
-                        />
-                        <div className="flex items-center gap-2 mt-1">
-                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PIN:</span>
-                           <input 
-                              defaultValue={u.pin} 
-                              className="bg-white border-slate-200 border rounded px-2 py-0.5 text-[10px] font-black text-blue-600 w-16"
-                              onBlur={(e) => supabase.from('users').update({pin: e.target.value}).eq('id', u.id)}
-                           />
+                        <input defaultValue={u.name} className="font-black text-slate-800 bg-transparent border-none p-0 outline-none w-full" onBlur={(e) => supabase.from('users').update({name: e.target.value}).eq('id', u.id)} />
+                        <div className="flex items-center gap-2 mt-1 text-[10px]">
+                           <span className="font-bold text-slate-400 uppercase tracking-widest">PIN:</span>
+                           <input defaultValue={u.pin} className="bg-white border-slate-200 border rounded px-2 py-0.5 font-black text-blue-600 w-16" onBlur={(e) => supabase.from('users').update({pin: e.target.value}).eq('id', u.id)} />
                         </div>
                       </div>
-                      <button onClick={() => {if(confirm("Delete user permanently? This cannot be undone." )) supabase.from('users').delete().eq('id', u.id).then(() => loadAllData())}} className="text-slate-300 active:text-red-500 ml-4"><Trash2 size={18}/></button>
+                      <button onClick={() => {if(confirm("Delete user permanently?")) supabase.from('users').delete().eq('id', u.id).then(() => loadAllData())}} className="text-slate-300 active:text-red-500 ml-4"><Trash2 size={18}/></button>
                    </div>
                 ))}
               </div>
             </section>
-
             <button onClick={() => { setCurrentUser(null); setShowSettings(false); setCurrentPage('dashboard'); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black flex items-center justify-center gap-3 active:bg-red-100 uppercase tracking-tighter">
               <LogOut size={20}/> Logout & Switch User
             </button>
@@ -367,14 +355,67 @@ export default function CalfTracker() {
         </div>
       )}
 
-      {/* FOOTER BUTTON */}
+      {selectedCalfHistory && (
+        <div className="fixed inset-0 bg-white z-[100] flex flex-col">
+          <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10 shadow-sm">
+            <div>
+                <h2 className="text-3xl font-black italic text-slate-900 uppercase leading-none">#{selectedCalfHistory.bull_number || selectedCalfHistory.number}</h2>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Feeding History Graph</p>
+            </div>
+            <button onClick={() => setSelectedCalfHistory(null)} className="p-3 bg-slate-100 rounded-full"><X size={24}/></button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-50">
+             {/* FEEDING GRAPH SECTION */}
+             <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2 mb-6 text-blue-600">
+                    <BarChart3 size={18}/>
+                    <span className="text-xs font-black uppercase tracking-widest">Growth Curve (Last 14 Shifts)</span>
+                </div>
+                <div className="flex items-end justify-between h-40 gap-1 px-2 border-b border-slate-100 pb-2">
+                    {[...getCalfFeedings(selectedCalfHistory)].reverse().slice(-14).map((f, i) => (
+                        <div key={i} className="flex-1 flex flex-col items-center group">
+                            <div 
+                                style={{ height: `${f.consumption}%` }} 
+                                className={`w-full max-w-[12px] rounded-t-full transition-all duration-500 ${f.consumption >= 100 ? 'bg-green-400' : f.consumption >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`}
+                            />
+                        </div>
+                    ))}
+                    {getCalfFeedings(selectedCalfHistory).length === 0 && (
+                        <div className="w-full flex items-center justify-center text-[10px] font-black text-slate-300 uppercase italic">No Data to Graph</div>
+                    )}
+                </div>
+                <div className="flex justify-between mt-2 px-2">
+                    <span className="text-[8px] font-black text-slate-300 uppercase tracking-tighter">Older</span>
+                    <span className="text-[8px] font-black text-slate-300 uppercase tracking-tighter">Latest</span>
+                </div>
+             </div>
+
+             {/* LIST SECTION */}
+             <div className="space-y-3 pb-10">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Detailed Logs</span>
+                {getCalfFeedings(selectedCalfHistory).map((f, i) => (
+                  <div key={i} className="p-5 bg-white rounded-3xl border border-slate-100 shadow-sm">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
+                        {f.treatment && <span className="flex items-center gap-1 text-red-600 font-black text-[10px] uppercase"><ClipboardCheck size={14}/> Treated</span>}
+                      </div>
+                      {f.notes && <p className="text-sm italic text-slate-600 bg-slate-50 p-3 rounded-xl border-l-4 border-blue-400 mb-2">"{f.notes}"</p>}
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{new Date(f.timestamp).toLocaleDateString()} • {f.period} by {f.user_name}</p>
+                  </div>
+                ))}
+             </div>
+          </div>
+        </div>
+      )}
+
+      {/* REMAINDER OF FOOTER BUTTONS & ADD MODAL (UNCHANGED) */}
       <div className="fixed bottom-0 left-0 right-0 p-6 flex justify-center z-30 pointer-events-none">
         <button onClick={() => setShowAddCalf(true)} className="bg-slate-900 text-white w-full max-w-xs py-5 rounded-[2.5rem] font-black shadow-2xl flex items-center justify-center gap-3 pointer-events-auto active:scale-95 transition-transform">
           <Plus size={24}/> ADD NEW CALF
         </button>
       </div>
 
-      {/* NEW CALF MODAL */}
       {showAddCalf && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] p-8 w-full max-w-sm space-y-6 shadow-2xl">
@@ -392,28 +433,6 @@ export default function CalfTracker() {
             </div>
             <button onClick={addCalf} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg shadow-lg uppercase">Create {newCalf.isBull ? 'Bull' : 'Heifer'}</button>
             <button onClick={() => setShowAddCalf(false)} className="w-full text-slate-400 font-black text-xs uppercase text-center">Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {/* CALF HISTORY MODAL */}
-      {selectedCalfHistory && (
-        <div className="fixed inset-0 bg-white z-[100] flex flex-col">
-          <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0">
-            <h2 className="text-2xl font-black italic text-slate-800 uppercase">#{selectedCalfHistory.bull_number || selectedCalfHistory.number} Logs</h2>
-            <button onClick={() => setSelectedCalfHistory(null)} className="p-3 bg-slate-100 rounded-full"><X size={24}/></button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
-             {getCalfFeedings(selectedCalfHistory).map((f, i) => (
-               <div key={i} className="p-5 bg-white rounded-3xl border border-slate-200 shadow-sm">
-                  <div className="flex justify-between items-center mb-2">
-                     <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
-                     {f.treatment && <span className="flex items-center gap-1 text-red-600 font-black text-[10px] uppercase"><ClipboardCheck size={14}/> Treatment Given</span>}
-                  </div>
-                  {f.notes && <p className="text-sm italic text-slate-600 bg-slate-50 p-3 rounded-xl border-l-4 border-blue-400 mb-2">"{f.notes}"</p>}
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{new Date(f.timestamp).toLocaleDateString()} • {f.period} by {f.user_name}</p>
-               </div>
-             ))}
           </div>
         </div>
       )}
@@ -445,7 +464,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 mb-4">
+      <div className="grid grid-cols-3 gap-2 mb-4" onClick={onShowHistory}>
         {latest.length > 0 ? latest.map((f, i) => (
           <div key={i} className="flex flex-col items-center">
             <div className={`w-full py-2 rounded-xl text-center text-white text-[9px] font-black shadow-sm ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>
