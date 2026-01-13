@@ -109,7 +109,6 @@ export default function CalfTracker() {
     const today = etNow.toISOString().slice(0, 10);
     const calfKey = calf.bull_number || calf.number;
     
-    // Check if a feeding already exists for this calf/shift
     const existing = feedings.find(f => 
       (calf.type === 'bull' ? f.bull_number === calf.bull_number : f.calf_number === calf.number) && 
       f.timestamp.startsWith(today) && f.period === period
@@ -119,7 +118,8 @@ export default function CalfTracker() {
       consumption,
       timestamp: etNow.toISOString(),
       notes: noteBuffer[calfKey] !== undefined ? noteBuffer[calfKey] : (existing ? existing.notes : null),
-      treatment_given: treatmentBuffer[calfKey] !== undefined ? treatmentBuffer[calfKey] : (existing ? existing.treatment_given : false),
+      // CHANGED: Using 'treatment' instead of 'treatment_given' to match DB
+      treatment: treatmentBuffer[calfKey] !== undefined ? treatmentBuffer[calfKey] : (existing ? existing.treatment : false),
       user_name: currentUser.name,
       calf_number: calf.type !== 'bull' ? calf.number : (existing ? existing.calf_number : null),
       bull_number: calf.type === 'bull' ? calf.bull_number : (existing ? existing.bull_number : null),
@@ -325,7 +325,7 @@ export default function CalfTracker() {
                <div key={i} className="p-5 bg-white rounded-3xl border border-slate-200 shadow-sm">
                   <div className="flex justify-between items-center mb-2">
                      <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
-                     {f.treatment_given && <span className="flex items-center gap-1 text-red-600 font-black text-[10px] uppercase"><ClipboardCheck size={14}/> Treatment Given</span>}
+                     {f.treatment && <span className="flex items-center gap-1 text-red-600 font-black text-[10px] uppercase"><ClipboardCheck size={14}/> Treatment Given</span>}
                   </div>
                   {f.notes && <p className="text-sm italic text-slate-600 bg-slate-50 p-3 rounded-xl border-l-4 border-blue-400 mb-2">"{f.notes}"</p>}
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{new Date(f.timestamp).toLocaleDateString()} • {f.period} by {f.user_name}</p>
@@ -344,7 +344,8 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
   const todayFeeding = history.find(f => f.timestamp.startsWith(todayStr) && f.period === currentPeriod);
 
   const displayNote = noteValue !== undefined ? noteValue : (todayFeeding?.notes || '');
-  const displayTreatment = treatmentValue !== undefined ? treatmentValue : (todayFeeding?.treatment_given || false);
+  // CHANGED: Using 'treatment' instead of 'treatment_given' to match DB
+  const displayTreatment = treatmentValue !== undefined ? treatmentValue : (todayFeeding?.treatment || false);
 
   return (
     <div className={`bg-white p-6 rounded-[2.5rem] shadow-sm border-2 transition-all ${todayFeeding ? 'border-green-200 opacity-90' : (calf.type === 'bull' ? 'border-blue-200' : 'border-slate-100')}`}>
