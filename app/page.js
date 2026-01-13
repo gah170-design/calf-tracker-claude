@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, FilterX } from 'lucide-react';
+import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -109,6 +109,7 @@ export default function CalfTracker() {
     const today = etNow.toISOString().slice(0, 10);
     const calfKey = calf.bull_number || calf.number;
     
+    // Check if a feeding already exists for this calf/shift
     const existing = feedings.find(f => 
       (calf.type === 'bull' ? f.bull_number === calf.bull_number : f.calf_number === calf.number) && 
       f.timestamp.startsWith(today) && f.period === period
@@ -119,24 +120,29 @@ export default function CalfTracker() {
       timestamp: etNow.toISOString(),
       notes: noteBuffer[calfKey] !== undefined ? noteBuffer[calfKey] : (existing ? existing.notes : null),
       treatment_given: treatmentBuffer[calfKey] !== undefined ? treatmentBuffer[calfKey] : (existing ? existing.treatment_given : false),
-      user_name: currentUser.name
+      user_name: currentUser.name,
+      calf_number: calf.type !== 'bull' ? calf.number : (existing ? existing.calf_number : null),
+      bull_number: calf.type === 'bull' ? calf.bull_number : (existing ? existing.bull_number : null),
+      calf_name: calf.name || null,
+      period,
     };
 
+    let error;
     if (existing) {
-      await supabase.from('feedings').update(feedingData).eq('id', existing.id);
+      const { error: err } = await supabase.from('feedings').update(feedingData).eq('id', existing.id);
+      error = err;
     } else {
-      await supabase.from('feedings').insert([{
-        ...feedingData,
-        calf_number: calf.type !== 'bull' ? calf.number : null,
-        bull_number: calf.type === 'bull' ? calf.bull_number : null,
-        calf_name: calf.name || null,
-        period,
-      }]);
+      const { error: err } = await supabase.from('feedings').insert([feedingData]);
+      error = err;
     }
 
-    setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
-    setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
-    await loadAllData();
+    if (error) {
+      alert("Feeding Record Error: " + error.message);
+    } else {
+      setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
+      setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
+      await loadAllData();
+    }
   };
 
   const getCalfAge = (date) => Math.floor((getETDate() - new Date(date)) / (1000 * 60 * 60 * 24));
@@ -159,8 +165,6 @@ export default function CalfTracker() {
 
   const activeHeifers = calves.filter(c => c.status === 'active' && c.type !== 'bull');
   const activeBulls = calves.filter(c => c.status === 'active' && c.type === 'bull');
-  
-  // LOGIC: Flagged if last 2 feedings are BOTH 50% or less
   const flaggedCalves = activeHeifers.filter(c => {
     const history = getCalfFeedings(c).slice(0, 2);
     return history.length >= 2 && history.every(f => f.consumption <= 50);
@@ -182,8 +186,8 @@ export default function CalfTracker() {
           </div>
           {showPinEntry && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-[3rem] p-8 w-full max-w-xs space-y-4 shadow-2xl text-center">
-                <h2 className="font-black italic uppercase text-slate-800">Pin for {selectedUser.name}</h2>
+              <div className="bg-white rounded-[3rem] p-8 w-full max-w-xs space-y-4 shadow-2xl">
+                <h2 className="font-black italic uppercase text-slate-800 text-center">Pin for {selectedUser.name}</h2>
                 <input type="password" inputMode="numeric" maxLength="4" value={pinInput} onChange={(e) => setPinInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center text-3xl font-black tracking-widest outline-none border-2 border-transparent focus:border-blue-600 text-blue-600" autoFocus />
                 <button onClick={() => { if(pinInput === selectedUser.pin) { setCurrentUser(selectedUser); setShowPinEntry(false); setPinInput(''); } else { alert("Wrong Pin"); setPinInput(''); }}} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg uppercase">Unlock</button>
               </div>
@@ -207,7 +211,7 @@ export default function CalfTracker() {
                   <button onClick={() => setCurrentPage('flagged')} className="w-full bg-red-500 text-white p-6 rounded-[2.5rem] flex justify-between items-center shadow-lg animate-pulse">
                     <div>
                       <div className="text-3xl font-black">{flaggedCalves.length}</div>
-                      <div className="text-[10px] font-black uppercase tracking-widest text-left">Flagged for Attention</div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-left">Attention Required</div>
                     </div>
                     <Activity size={32} />
                   </button>
@@ -238,12 +242,7 @@ export default function CalfTracker() {
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="flex items-center justify-between px-2">
-                  <button onClick={() => { setCurrentPage('dashboard'); setFilterProtocol('all'); }} className="flex items-center text-blue-600 font-black text-xs uppercase bg-blue-50 px-4 py-2 rounded-full"><ChevronLeft size={16}/> Back</button>
-                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                    {currentPage === 'flagged' ? 'Showing: Flagged' : (filterProtocol !== 'all' ? `Protocol: ${filterProtocol}` : 'All Animals')}
-                  </div>
-                </div>
+                <button onClick={() => { setCurrentPage('dashboard'); setFilterProtocol('all'); }} className="flex items-center text-blue-600 font-black text-xs uppercase mb-2 bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16}/> Back</button>
                 
                 {(currentPage === 'bulls' ? activeBulls : 
                    currentPage === 'flagged' ? flaggedCalves : 
@@ -274,37 +273,30 @@ export default function CalfTracker() {
         </>
       )}
 
-      {/* Settings Modal (Added Logout Button) */}
       {showSettings && (
         <div className="fixed inset-0 bg-white z-[100] flex flex-col p-6">
           <div className="flex justify-between items-center mb-10">
-            <h2 className="text-3xl font-black italic uppercase tracking-tighter leading-none">Settings</h2>
+            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Settings</h2>
             <button onClick={() => setShowSettings(false)} className="p-3 bg-slate-100 rounded-full"><X size={24}/></button>
           </div>
           <div className="space-y-4">
-            <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
-               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Current Operator</p>
-               <p className="text-xl font-black text-slate-800">{currentUser.name}</p>
-            </div>
-            <button onClick={() => { setCurrentUser(null); setShowSettings(false); setCurrentPage('dashboard'); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black flex items-center justify-center gap-3 active:bg-red-100 uppercase text-sm">
-               <LogOut size={20}/> Logout / Switch User
+            <button onClick={() => { setCurrentUser(null); setShowSettings(false); setCurrentPage('dashboard'); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black flex items-center justify-center gap-3 active:bg-red-100 uppercase">
+              <LogOut size={20}/> Logout / Switch User
             </button>
           </div>
         </div>
       )}
 
-      {/* Floating Add Button */}
       <div className="fixed bottom-0 left-0 right-0 p-6 flex justify-center z-30 pointer-events-none">
         <button onClick={() => setShowAddCalf(true)} className="bg-slate-900 text-white w-full max-w-xs py-5 rounded-[2.5rem] font-black shadow-2xl flex items-center justify-center gap-3 pointer-events-auto active:scale-95 transition-transform">
           <Plus size={24}/> ADD NEW CALF
         </button>
       </div>
 
-      {/* Add Calf Modal */}
       {showAddCalf && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] p-8 w-full max-w-sm space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black italic text-slate-800 uppercase leading-none">New Entry</h2>
+            <h2 className="text-2xl font-black italic text-slate-800 uppercase">New Entry</h2>
             <div className="flex gap-2 p-1.5 bg-slate-100 rounded-2xl">
                <button onClick={() => setNewCalf({...newCalf, isBull: false})} className={`flex-1 py-3 rounded-xl font-black text-xs transition-all ${!newCalf.isBull ? 'bg-white shadow-md text-blue-600' : 'text-slate-400'}`}>HEIFER</button>
                <button onClick={() => setNewCalf({...newCalf, isBull: true})} className={`flex-1 py-3 rounded-xl font-black text-xs transition-all ${newCalf.isBull ? 'bg-white shadow-md text-blue-800' : 'text-slate-400'}`}>BULL</button>
@@ -322,7 +314,6 @@ export default function CalfTracker() {
         </div>
       )}
 
-      {/* History Modal */}
       {selectedCalfHistory && (
         <div className="fixed inset-0 bg-white z-[100] flex flex-col">
           <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0">
