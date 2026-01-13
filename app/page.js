@@ -118,11 +118,10 @@ export default function CalfTracker() {
       consumption,
       timestamp: etNow.toISOString(),
       notes: noteBuffer[calfKey] !== undefined ? noteBuffer[calfKey] : (existing ? existing.notes : null),
-      // CHANGED: Using 'treatment' instead of 'treatment_given' to match DB
       treatment: treatmentBuffer[calfKey] !== undefined ? treatmentBuffer[calfKey] : (existing ? existing.treatment : false),
       user_name: currentUser.name,
-      calf_number: calf.type !== 'bull' ? calf.number : (existing ? existing.calf_number : null),
-      bull_number: calf.type === 'bull' ? calf.bull_number : (existing ? existing.bull_number : null),
+      calf_number: calf.type !== 'bull' ? calf.number : null,
+      bull_number: calf.type === 'bull' ? calf.bull_number : null,
       calf_name: calf.name || null,
       period,
     };
@@ -248,7 +247,6 @@ export default function CalfTracker() {
                    currentPage === 'flagged' ? flaggedCalves : 
                    (filterProtocol === 'all' ? activeHeifers : activeHeifers.filter(c => getProtocolStatus(c) === filterProtocol))
                   )
-                  .sort((a, b) => new Date(b.birth_date) - new Date(a.birth_date))
                   .map(calf => (
                     <CalfCard 
                       key={calf.id} 
@@ -344,7 +342,6 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
   const todayFeeding = history.find(f => f.timestamp.startsWith(todayStr) && f.period === currentPeriod);
 
   const displayNote = noteValue !== undefined ? noteValue : (todayFeeding?.notes || '');
-  // CHANGED: Using 'treatment' instead of 'treatment_given' to match DB
   const displayTreatment = treatmentValue !== undefined ? treatmentValue : (todayFeeding?.treatment || false);
 
   return (
@@ -363,12 +360,17 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
         </div>
       </div>
 
-      <div className="flex gap-2 mb-4">
+      <div className="grid grid-cols-3 gap-2 mb-4">
         {latest.length > 0 ? latest.map((f, i) => (
-          <div key={i} className={`flex-1 py-2 rounded-xl text-center text-white text-[9px] font-black shadow-sm ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>
-            {f.consumption}%
+          <div key={i} className="flex flex-col items-center">
+            <div className={`w-full py-2 rounded-xl text-center text-white text-[9px] font-black shadow-sm ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>
+              {f.consumption}%
+            </div>
+            <div className="text-[7px] font-black text-slate-400 uppercase mt-1 tracking-tighter">
+              {new Date(f.timestamp).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})} {f.period}
+            </div>
           </div>
-        )) : <div className="w-full py-2 border-2 border-dashed border-slate-50 rounded-xl" />}
+        )) : <div className="col-span-3 py-2 border-2 border-dashed border-slate-50 rounded-xl" />}
       </div>
 
       <div className="flex gap-2 items-center mb-6">
