@@ -366,8 +366,10 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
             <div className={`w-full py-2 rounded-xl text-center text-white text-[9px] font-black shadow-sm ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>
               {f.consumption}%
             </div>
-            <div className="text-[7px] font-black text-slate-400 uppercase mt-1 tracking-tighter">
-              {new Date(f.timestamp).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})} {f.period}
+            {/* LARGE FONT LABELS */}
+            <div className="text-[11px] font-black text-slate-600 uppercase mt-1 tracking-tight text-center leading-tight">
+              <div>{new Date(f.timestamp).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})}</div>
+              <div className="text-blue-600">{f.period}</div>
             </div>
           </div>
         )) : <div className="col-span-3 py-2 border-2 border-dashed border-slate-50 rounded-xl" />}
