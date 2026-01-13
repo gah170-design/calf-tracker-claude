@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, Save, Trash2, Users, ListChecks, Hash } from 'lucide-react';
+import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, Save, Trash2, Users, ListChecks, Hash, Edit3 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -100,7 +100,7 @@ export default function CalfTracker() {
       setShowAddCalf(false);
       setNewCalf({ name: '', birthDate: getETDate().toISOString().slice(0, 16), isBull: false });
       await loadAllData();
-    } else alert("Error: " + error.message);
+    }
   };
 
   const recordFeeding = async (calf, consumption) => {
@@ -126,20 +126,12 @@ export default function CalfTracker() {
       period,
     };
 
-    let error;
-    if (existing) {
-      const { error: err } = await supabase.from('feedings').update(feedingData).eq('id', existing.id);
-      error = err;
-    } else {
-      const { error: err } = await supabase.from('feedings').insert([feedingData]);
-      error = err;
-    }
+    if (existing) await supabase.from('feedings').update(feedingData).eq('id', existing.id);
+    else await supabase.from('feedings').insert([feedingData]);
 
-    if (!error) {
-      setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
-      setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
-      await loadAllData();
-    }
+    setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
+    setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
+    await loadAllData();
   };
 
   const getCalfAge = (date) => Math.floor((getETDate() - new Date(date)) / (1000 * 60 * 60 * 24));
@@ -173,7 +165,7 @@ export default function CalfTracker() {
         <div className="h-screen bg-slate-900 flex items-center justify-center p-6 text-center">
           <div className="bg-white rounded-[3rem] p-10 w-full max-w-sm shadow-2xl">
             <h1 className="font-black text-3xl mb-8 italic tracking-tighter uppercase text-slate-900 leading-none">Operator Login</h1>
-            <div className="space-y-4 text-left">
+            <div className="space-y-4 text-left overflow-y-auto max-h-[60vh] no-scrollbar">
               {users.map(u => (
                 <button key={u.id} onClick={() => { setSelectedUser(u); setShowPinEntry(true); }} className="w-full p-6 bg-slate-100 rounded-3xl font-black transition-all uppercase flex justify-between items-center group text-slate-700 active:bg-blue-600 active:text-white">
                   {u.name} <Activity className="opacity-0 group-hover:opacity-100" />
@@ -187,6 +179,7 @@ export default function CalfTracker() {
                 <h2 className="font-black italic uppercase text-slate-800 text-center">Pin for {selectedUser.name}</h2>
                 <input type="password" inputMode="numeric" maxLength="4" value={pinInput} onChange={(e) => setPinInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center text-3xl font-black tracking-widest outline-none border-2 border-transparent focus:border-blue-600 text-blue-600" autoFocus />
                 <button onClick={() => { if(pinInput === selectedUser.pin) { setCurrentUser(selectedUser); setShowPinEntry(false); setPinInput(''); } else { alert("Wrong Pin"); setPinInput(''); }}} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg uppercase">Unlock</button>
+                <button onClick={() => { setShowPinEntry(false); setPinInput(''); }} className="w-full text-slate-400 font-black text-xs uppercase">Cancel</button>
               </div>
             </div>
           )}
@@ -244,20 +237,9 @@ export default function CalfTracker() {
                     
                     {currentPage !== 'flagged' && currentPage !== 'bulls' && (
                         <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                            <button 
-                                onClick={() => setFilterProtocol('all')}
-                                className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
-                            >
-                                All Heifers
-                            </button>
+                            <button onClick={() => setFilterProtocol('all')} className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>All Heifers</button>
                             {protocols.map(p => (
-                                <button 
-                                    key={p.id}
-                                    onClick={() => setFilterProtocol(p.name)}
-                                    className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === p.name ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
-                                >
-                                    {p.name}
-                                </button>
+                                <button key={p.id} onClick={() => setFilterProtocol(p.name)} className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === p.name ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>{p.name}</button>
                             ))}
                         </div>
                     )}
@@ -292,7 +274,7 @@ export default function CalfTracker() {
         </>
       )}
 
-      {/* FULL SETTINGS PANEL RESTORED */}
+      {/* FULL SETTINGS PANEL */}
       {showSettings && (
         <div className="fixed inset-0 bg-white z-[100] flex flex-col overflow-y-auto pb-10">
           <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
@@ -301,7 +283,7 @@ export default function CalfTracker() {
           </div>
 
           <div className="p-6 space-y-10">
-            {/* NEXT NUMBERS */}
+            {/* COUNTERS */}
             <section className="space-y-4">
                 <div className="flex items-center gap-2 text-blue-600 font-black uppercase text-xs tracking-widest"><Hash size={16}/> Counter Control</div>
                 <div className="grid grid-cols-2 gap-4">
@@ -316,7 +298,7 @@ export default function CalfTracker() {
                 </div>
             </section>
 
-            {/* PROTOCOLS EDITOR */}
+            {/* PROTOCOLS */}
             <section className="space-y-4">
               <div className="flex items-center justify-between">
                  <div className="flex items-center gap-2 text-blue-600 font-black uppercase text-xs tracking-widest"><ListChecks size={16}/> Feeding Protocols</div>
@@ -329,7 +311,7 @@ export default function CalfTracker() {
                 {protocols.map(p => (
                    <div key={p.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-4">
                       <div className="flex-1">
-                         <input defaultValue={p.name} onBlur={(e) => supabase.from('protocols').update({name: e.target.value}).eq('id', p.id)} className="font-black uppercase text-slate-800 bg-transparent border-0 p-0 text-sm w-full" />
+                         <input defaultValue={p.name} onBlur={(e) => supabase.from('protocols').update({name: e.target.value}).eq('id', p.id)} className="font-black uppercase text-slate-800 bg-transparent border-0 p-0 text-sm w-full outline-none" />
                          <div className="flex items-center gap-2 mt-1">
                             <input type="number" defaultValue={p.value} onBlur={(e) => supabase.from('protocols').update({value: e.target.value}).eq('id', p.id)} className="w-12 bg-white border rounded p-1 text-[10px] font-bold" />
                             <select defaultValue={p.type} onChange={(e) => supabase.from('protocols').update({type: e.target.value}).eq('id', p.id)} className="bg-white border rounded p-1 text-[10px] font-bold">
@@ -344,7 +326,7 @@ export default function CalfTracker() {
               </div>
             </section>
 
-            {/* USERS EDITOR */}
+            {/* USER MANAGEMENT (ENHANCED) */}
             <section className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-blue-600 font-black uppercase text-xs tracking-widest"><Users size={16}/> Farm Crew</div>
@@ -356,12 +338,23 @@ export default function CalfTracker() {
               </div>
               <div className="space-y-3">
                 {users.map(u => (
-                   <div key={u.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
-                      <div>
-                        <div className="font-black text-slate-800">{u.name}</div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PIN: {u.pin}</div>
+                   <div key={u.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between group">
+                      <div className="flex-1">
+                        <input 
+                           defaultValue={u.name} 
+                           className="font-black text-slate-800 bg-transparent border-none p-0 outline-none w-full"
+                           onBlur={(e) => supabase.from('users').update({name: e.target.value}).eq('id', u.id)}
+                        />
+                        <div className="flex items-center gap-2 mt-1">
+                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PIN:</span>
+                           <input 
+                              defaultValue={u.pin} 
+                              className="bg-white border-slate-200 border rounded px-2 py-0.5 text-[10px] font-black text-blue-600 w-16"
+                              onBlur={(e) => supabase.from('users').update({pin: e.target.value}).eq('id', u.id)}
+                           />
+                        </div>
                       </div>
-                      <button onClick={() => {if(confirm("Remove user?")) supabase.from('users').delete().eq('id', u.id).then(() => loadAllData())}} className="text-red-300 active:text-red-500"><Trash2 size={18}/></button>
+                      <button onClick={() => {if(confirm("Delete user permanently? This cannot be undone." )) supabase.from('users').delete().eq('id', u.id).then(() => loadAllData())}} className="text-slate-300 active:text-red-500 ml-4"><Trash2 size={18}/></button>
                    </div>
                 ))}
               </div>
@@ -381,7 +374,7 @@ export default function CalfTracker() {
         </button>
       </div>
 
-      {/* ADD CALF MODAL */}
+      {/* NEW CALF MODAL */}
       {showAddCalf && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] p-8 w-full max-w-sm space-y-6 shadow-2xl">
@@ -403,7 +396,7 @@ export default function CalfTracker() {
         </div>
       )}
 
-      {/* LOGS MODAL */}
+      {/* CALF HISTORY MODAL */}
       {selectedCalfHistory && (
         <div className="fixed inset-0 bg-white z-[100] flex flex-col">
           <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0">
