@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut } from 'lucide-react';
+import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, FilterX } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -74,10 +74,8 @@ export default function CalfTracker() {
   const addCalf = async () => {
     let bullNumber = null;
     let dbNumberValue;
-    
     if (newCalf.isBull) {
       bullNumber = `M${settings.nextBullNumber}`;
-      // Use a negative version of nextBullNumber to ensure numeric uniqueness in DB
       dbNumberValue = -settings.nextBullNumber; 
     } else {
       const autoNum = settings.nextCalfNumber;
@@ -88,7 +86,6 @@ export default function CalfTracker() {
         dbNumberValue = autoNum;
       }
     }
-    
     const { error } = await supabase.from('calves').insert([{
       number: dbNumberValue,
       bull_number: bullNumber,
@@ -97,19 +94,13 @@ export default function CalfTracker() {
       status: 'active',
       type: newCalf.isBull ? 'bull' : 'heifer'
     }]);
-
     if (!error) {
-      if (newCalf.isBull) {
-        await saveSettings('nextBullNumber', settings.nextBullNumber + 1);
-      } else if (dbNumberValue === settings.nextCalfNumber) {
-        await saveSettings('nextCalfNumber', settings.nextCalfNumber + 1);
-      }
+      if (newCalf.isBull) await saveSettings('nextBullNumber', settings.nextBullNumber + 1);
+      else if (dbNumberValue === settings.nextCalfNumber) await saveSettings('nextCalfNumber', settings.nextCalfNumber + 1);
       setShowAddCalf(false);
       setNewCalf({ name: '', birthDate: getETDate().toISOString().slice(0, 16), isBull: false });
       await loadAllData();
-    } else {
-      alert("Error: " + error.message);
-    }
+    } else alert("Error: " + error.message);
   };
 
   const recordFeeding = async (calf, consumption) => {
@@ -164,10 +155,12 @@ export default function CalfTracker() {
     return "Finished";
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center font-black text-slate-900">LOADING...</div>;
+  if (loading) return <div className="h-screen flex items-center justify-center font-black">LOADING...</div>;
 
   const activeHeifers = calves.filter(c => c.status === 'active' && c.type !== 'bull');
   const activeBulls = calves.filter(c => c.status === 'active' && c.type === 'bull');
+  
+  // LOGIC: Flagged if last 2 feedings are BOTH 50% or less
   const flaggedCalves = activeHeifers.filter(c => {
     const history = getCalfFeedings(c).slice(0, 2);
     return history.length >= 2 && history.every(f => f.consumption <= 50);
@@ -189,10 +182,10 @@ export default function CalfTracker() {
           </div>
           {showPinEntry && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-[3rem] p-8 w-full max-w-xs space-y-4 shadow-2xl">
+              <div className="bg-white rounded-[3rem] p-8 w-full max-w-xs space-y-4 shadow-2xl text-center">
                 <h2 className="font-black italic uppercase text-slate-800">Pin for {selectedUser.name}</h2>
                 <input type="password" inputMode="numeric" maxLength="4" value={pinInput} onChange={(e) => setPinInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center text-3xl font-black tracking-widest outline-none border-2 border-transparent focus:border-blue-600 text-blue-600" autoFocus />
-                <button onClick={() => { if(pinInput === selectedUser.pin) { setCurrentUser(selectedUser); setShowPinEntry(false); setPinInput(''); } else { alert("Wrong Pin"); setPinInput(''); }}} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg uppercase tracking-tight">Unlock Operator</button>
+                <button onClick={() => { if(pinInput === selectedUser.pin) { setCurrentUser(selectedUser); setShowPinEntry(false); setPinInput(''); } else { alert("Wrong Pin"); setPinInput(''); }}} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg uppercase">Unlock</button>
               </div>
             </div>
           )}
@@ -211,10 +204,10 @@ export default function CalfTracker() {
             {currentPage === 'dashboard' ? (
               <div className="space-y-4">
                 {flaggedCalves.length > 0 && (
-                  <button onClick={() => { setFilterProtocol('all'); setCurrentPage('feed'); }} className="w-full bg-red-500 text-white p-6 rounded-[2.5rem] flex justify-between items-center shadow-lg animate-pulse">
+                  <button onClick={() => setCurrentPage('flagged')} className="w-full bg-red-500 text-white p-6 rounded-[2.5rem] flex justify-between items-center shadow-lg animate-pulse">
                     <div>
                       <div className="text-3xl font-black">{flaggedCalves.length}</div>
-                      <div className="text-[10px] font-black uppercase tracking-widest text-left">Attention Required</div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-left">Flagged for Attention</div>
                     </div>
                     <Activity size={32} />
                   </button>
@@ -245,7 +238,12 @@ export default function CalfTracker() {
               </div>
             ) : (
               <div className="space-y-4">
-                <button onClick={() => setCurrentPage('dashboard')} className="flex items-center text-blue-600 font-black text-xs uppercase mb-2 bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16}/> Dashboard</button>
+                <div className="flex items-center justify-between px-2">
+                  <button onClick={() => { setCurrentPage('dashboard'); setFilterProtocol('all'); }} className="flex items-center text-blue-600 font-black text-xs uppercase bg-blue-50 px-4 py-2 rounded-full"><ChevronLeft size={16}/> Back</button>
+                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                    {currentPage === 'flagged' ? 'Showing: Flagged' : (filterProtocol !== 'all' ? `Protocol: ${filterProtocol}` : 'All Animals')}
+                  </div>
+                </div>
                 
                 {(currentPage === 'bulls' ? activeBulls : 
                    currentPage === 'flagged' ? flaggedCalves : 
@@ -276,65 +274,59 @@ export default function CalfTracker() {
         </>
       )}
 
-      {/* SETTINGS OVERLAY */}
+      {/* Settings Modal (Added Logout Button) */}
       {showSettings && (
         <div className="fixed inset-0 bg-white z-[100] flex flex-col p-6">
           <div className="flex justify-between items-center mb-10">
-            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Settings</h2>
+            <h2 className="text-3xl font-black italic uppercase tracking-tighter leading-none">Settings</h2>
             <button onClick={() => setShowSettings(false)} className="p-3 bg-slate-100 rounded-full"><X size={24}/></button>
           </div>
-          <div className="space-y-4 flex-1">
-             <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
-               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Current Operator</p>
-               <p className="text-xl font-black text-slate-800">{currentUser?.name}</p>
-             </div>
-             <button onClick={() => { setCurrentUser(null); setShowSettings(false); setCurrentPage('dashboard'); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black flex items-center justify-center gap-3 active:bg-red-100">
-               <LogOut size={20}/> LOGOUT / SWITCH USER
-             </button>
+          <div className="space-y-4">
+            <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
+               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Current Operator</p>
+               <p className="text-xl font-black text-slate-800">{currentUser.name}</p>
+            </div>
+            <button onClick={() => { setCurrentUser(null); setShowSettings(false); setCurrentPage('dashboard'); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black flex items-center justify-center gap-3 active:bg-red-100 uppercase text-sm">
+               <LogOut size={20}/> Logout / Switch User
+            </button>
           </div>
-          <p className="text-center text-[10px] font-black text-slate-300 uppercase tracking-widest py-4 italic">Calf Tracker v2.0</p>
         </div>
       )}
 
-      {/* FLOATING ACTION BUTTON */}
+      {/* Floating Add Button */}
       <div className="fixed bottom-0 left-0 right-0 p-6 flex justify-center z-30 pointer-events-none">
         <button onClick={() => setShowAddCalf(true)} className="bg-slate-900 text-white w-full max-w-xs py-5 rounded-[2.5rem] font-black shadow-2xl flex items-center justify-center gap-3 pointer-events-auto active:scale-95 transition-transform">
           <Plus size={24}/> ADD NEW CALF
         </button>
       </div>
 
-      {/* ADD CALF MODAL */}
+      {/* Add Calf Modal */}
       {showAddCalf && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] p-8 w-full max-w-sm space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black italic text-slate-800 uppercase tracking-tight">New Entry</h2>
+            <h2 className="text-2xl font-black italic text-slate-800 uppercase leading-none">New Entry</h2>
             <div className="flex gap-2 p-1.5 bg-slate-100 rounded-2xl">
                <button onClick={() => setNewCalf({...newCalf, isBull: false})} className={`flex-1 py-3 rounded-xl font-black text-xs transition-all ${!newCalf.isBull ? 'bg-white shadow-md text-blue-600' : 'text-slate-400'}`}>HEIFER</button>
                <button onClick={() => setNewCalf({...newCalf, isBull: true})} className={`flex-1 py-3 rounded-xl font-black text-xs transition-all ${newCalf.isBull ? 'bg-white shadow-md text-blue-800' : 'text-slate-400'}`}>BULL</button>
             </div>
             <div className="space-y-4 text-left">
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Name (Optional)</label>
-                <input type="text" placeholder="e.g. Daisy" value={newCalf.name} onChange={(e) => setNewCalf({...newCalf, name: e.target.value})} className="w-full p-5 bg-slate-50 rounded-2xl font-bold border-0 mt-1 focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" />
-              </div>
+              <input type="text" placeholder="Name (Optional)" value={newCalf.name} onChange={(e) => setNewCalf({...newCalf, name: e.target.value})} className="w-full p-5 bg-slate-50 rounded-2xl font-bold border-0 outline-none focus:ring-2 focus:ring-blue-500 text-slate-800" />
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Birth Date</label>
                 <input type="datetime-local" value={newCalf.birthDate} onChange={(e) => setNewCalf({...newCalf, birthDate: e.target.value})} className="w-full p-5 bg-slate-50 rounded-2xl font-bold border-0 mt-1 outline-none text-slate-800" />
               </div>
             </div>
-            <div className="pt-2 space-y-2">
-              <button onClick={addCalf} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg shadow-lg active:bg-blue-700 transition-colors uppercase">Create {newCalf.isBull ? 'Bull M'+settings.nextBullNumber : 'Heifer #'+settings.nextCalfNumber}</button>
-              <button onClick={() => setShowAddCalf(false)} className="w-full py-2 text-slate-400 font-black text-xs uppercase tracking-widest text-center">Cancel</button>
-            </div>
+            <button onClick={addCalf} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg shadow-lg uppercase">Create {newCalf.isBull ? 'Bull' : 'Heifer'}</button>
+            <button onClick={() => setShowAddCalf(false)} className="w-full text-slate-400 font-black text-xs uppercase text-center">Cancel</button>
           </div>
         </div>
       )}
 
-      {/* HISTORY MODAL */}
+      {/* History Modal */}
       {selectedCalfHistory && (
         <div className="fixed inset-0 bg-white z-[100] flex flex-col">
           <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0">
-            <h2 className="text-2xl font-black italic text-slate-800 uppercase leading-none">#{selectedCalfHistory.bull_number || selectedCalfHistory.number} Logs</h2>
+            <h2 className="text-2xl font-black italic text-slate-800 uppercase">#{selectedCalfHistory.bull_number || selectedCalfHistory.number} Logs</h2>
             <button onClick={() => setSelectedCalfHistory(null)} className="p-3 bg-slate-100 rounded-full"><X size={24}/></button>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
@@ -371,7 +363,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
             <h3 className="text-4xl font-black italic tracking-tighter text-slate-900 leading-none">#{calf.bull_number || calf.number}</h3>
             {todayFeeding && <CheckCircle2 className="text-green-500" size={24} />}
           </div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mt-1">{age} Days • {protocol} {calf.name && `• ${calf.name}`}</p>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1 leading-none">{age} Days • {protocol} {calf.name && `• ${calf.name}`}</p>
         </div>
         <div className="flex gap-2">
           {calf.type === 'bull' && <button onClick={() => onStatus(calf.id, 'sold')} className="p-3 bg-blue-50 text-blue-600 rounded-2xl active:bg-blue-100 transition-colors"><ShoppingCart size={20}/></button>}
