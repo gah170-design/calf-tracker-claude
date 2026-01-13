@@ -155,7 +155,7 @@ export default function CalfTracker() {
     return "Finished";
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center font-black">LOADING...</div>;
+  if (loading) return <div className="h-screen flex items-center justify-center font-black text-slate-900">LOADING...</div>;
 
   const activeHeifers = calves.filter(c => c.status === 'active' && c.type !== 'bull');
   const activeBulls = calves.filter(c => c.status === 'active' && c.type === 'bull');
@@ -169,7 +169,7 @@ export default function CalfTracker() {
       {!currentUser ? (
         <div className="h-screen bg-slate-900 flex items-center justify-center p-6 text-center">
           <div className="bg-white rounded-[3rem] p-10 w-full max-w-sm shadow-2xl">
-            <h1 className="font-black text-3xl mb-8 italic tracking-tighter uppercase text-slate-900">Operator Login</h1>
+            <h1 className="font-black text-3xl mb-8 italic tracking-tighter uppercase text-slate-900 leading-none">Operator Login</h1>
             <div className="space-y-4 text-left">
               {users.map(u => (
                 <button key={u.id} onClick={() => { setSelectedUser(u); setShowPinEntry(true); }} className="w-full p-6 bg-slate-100 rounded-3xl font-black transition-all uppercase flex justify-between items-center group text-slate-700 active:bg-blue-600 active:text-white">
@@ -205,7 +205,7 @@ export default function CalfTracker() {
                   <button onClick={() => { setFilterProtocol('all'); setCurrentPage('flagged'); }} className="w-full bg-red-500 text-white p-6 rounded-[2.5rem] flex justify-between items-center shadow-lg animate-pulse">
                     <div>
                       <div className="text-3xl font-black">{flaggedCalves.length}</div>
-                      <div className="text-[10px] font-black uppercase tracking-widest">Attention Required</div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-left">Attention Required</div>
                     </div>
                     <Activity size={32} />
                   </button>
@@ -236,12 +236,15 @@ export default function CalfTracker() {
               </div>
             ) : (
               <div className="space-y-4">
-                <button onClick={() => setCurrentPage('dashboard')} className="flex items-center text-blue-600 font-black text-xs uppercase mb-2 bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16}/> Back</button>
+                <button onClick={() => setCurrentPage('dashboard')} className="flex items-center text-blue-600 font-black text-xs uppercase mb-2 bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16}/> Dashboard</button>
                 
                 {(currentPage === 'bulls' ? activeBulls : 
                    currentPage === 'flagged' ? flaggedCalves : 
                    (filterProtocol === 'all' ? activeHeifers : activeHeifers.filter(c => getProtocolStatus(c) === filterProtocol))
-                  ).map(calf => (
+                  )
+                  // SORT: DESCENDING Birth Date puts newest (youngest) at top
+                  .sort((a, b) => new Date(b.birth_date) - new Date(a.birth_date))
+                  .map(calf => (
                     <CalfCard 
                       key={calf.id} 
                       calf={calf} 
@@ -334,7 +337,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
       <div className="flex justify-between items-start mb-4">
         <div onClick={onShowHistory} className="cursor-pointer">
           <div className="flex items-center gap-2">
-            <h3 className="text-4xl font-black italic tracking-tighter text-slate-900">#{calf.bull_number || calf.number}</h3>
+            <h3 className="text-4xl font-black italic tracking-tighter text-slate-900 leading-none">#{calf.bull_number || calf.number}</h3>
             {todayFeeding && <CheckCircle2 className="text-green-500" size={24} />}
           </div>
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{age} Days • {protocol} {calf.name && `• ${calf.name}`}</p>
