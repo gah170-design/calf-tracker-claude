@@ -201,11 +201,18 @@ export default function CalfTracker() {
     if (calf.type === 'bull') return 'Bull (Bottle)';
     const age = getCalfAgeDays(calf.birth_date);
     const count = getCalfFeedings(calf).length;
-    for (let p of protocols) {
+    
+    // Sort protocols by order to check them in sequence
+    const sortedProtocols = [...protocols].sort((a, b) => a.order - b.order);
+    
+    for (let p of sortedProtocols) {
       if (p.type === 'feedings' && count < p.value) return p.name;
       if (p.type === 'days' && age < p.value) return p.name;
     }
-    return "Finished";
+    
+    // If they've exceeded all protocols, they're on the last one (Weaned)
+    const lastProtocol = sortedProtocols[sortedProtocols.length - 1];
+    return lastProtocol ? lastProtocol.name : "Weaned";
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center font-black uppercase italic text-blue-600">Syncing Farm Data...</div>;
