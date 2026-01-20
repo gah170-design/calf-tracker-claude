@@ -213,8 +213,8 @@ export default function CalfTracker() {
   const activeHeifers = calves.filter(c => c.status === 'active' && c.type !== 'bull');
   const activeBulls = calves.filter(c => c.status === 'active' && c.type === 'bull');
   
-  // Only count heifers that are NOT finished (not weaned yet)
-  const heifersOnProtocol = activeHeifers.filter(c => getProtocolStatus(c) !== 'Finished');
+  // Only count heifers that are NOT weaned yet
+  const heifersOnProtocol = activeHeifers.filter(c => getProtocolStatus(c) !== 'Weaned');
   
   const flaggedCalves = activeHeifers.filter(c => {
     const history = getCalfFeedings(c).slice(0, 2);
