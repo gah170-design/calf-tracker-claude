@@ -212,6 +212,10 @@ export default function CalfTracker() {
 
   const activeHeifers = calves.filter(c => c.status === 'active' && c.type !== 'bull');
   const activeBulls = calves.filter(c => c.status === 'active' && c.type === 'bull');
+  
+  // Only count heifers that are NOT finished (not weaned yet)
+  const heifersOnProtocol = activeHeifers.filter(c => getProtocolStatus(c) !== 'Finished');
+  
   const flaggedCalves = activeHeifers.filter(c => {
     const history = getCalfFeedings(c).slice(0, 2);
     return history.length >= 2 && history.every(f => f.consumption <= 50);
@@ -267,7 +271,7 @@ export default function CalfTracker() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <button onClick={() => { setFilterProtocol('all'); setCurrentPage('feed'); }} className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-200 text-left active:scale-95 transition-transform">
-                    <div className="text-4xl font-black text-blue-600">{activeHeifers.length}</div>
+                    <div className="text-4xl font-black text-blue-600">{heifersOnProtocol.length}</div>
                     <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Heifers</div>
                   </button>
                   <button onClick={() => { setFilterProtocol('all'); setCurrentPage('bulls'); }} className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-200 text-left active:scale-95 transition-transform">
@@ -393,28 +397,30 @@ export default function CalfTracker() {
                     <BarChart3 size={18}/>
                     <span className="text-xs font-black uppercase tracking-widest">Growth Curve</span>
                 </div>
-                <div className="flex items-end justify-between h-32 gap-1 px-1 border-b-2 border-slate-200 pb-1">
-                    {(() => {
-                        const allFeedings = getCalfFeedings(selectedCalfHistory);
-                        const latest14 = allFeedings.slice(0, 14).reverse();
-                        
-                        if(latest14.length === 0) {
-                          return <div className="w-full h-full flex items-center justify-center text-[10px] font-black text-slate-200 uppercase italic">No Data</div>;
-                        }
-                        
-                        return latest14.map((f, i) => {
-                          const height = Math.max((f.consumption / 100) * 100, 8);
-                          return (
-                            <div key={i} className="flex-1 flex flex-col items-center group relative">
-                                <div 
-                                    className={`w-full rounded-t-sm transition-all ${f.consumption >= 100 ? 'bg-green-400' : f.consumption >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`}
-                                    style={{ height: `${height}%` }} 
-                                />
-                                <div className="text-[6px] font-black text-slate-300 mt-1 uppercase">{f.period}</div>
-                            </div>
-                          );
-                        });
-                    })()}
+                <div className="relative h-40 bg-slate-50 rounded-xl p-4">
+                    <div className="flex items-end justify-between h-full gap-1">
+                        {(() => {
+                            const allFeedings = getCalfFeedings(selectedCalfHistory);
+                            const latest14 = allFeedings.slice(0, 14).reverse();
+                            
+                            if(latest14.length === 0) {
+                              return <div className="w-full h-full flex items-center justify-center text-[10px] font-black text-slate-300 uppercase italic">No Data Yet</div>;
+                            }
+                            
+                            return latest14.map((f, i) => {
+                              const heightPercent = Math.max(f.consumption, 5);
+                              return (
+                                <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
+                                    <div 
+                                        className={`w-full rounded-t transition-all ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                                        style={{ height: `${heightPercent}%` }} 
+                                    />
+                                    <div className="text-[7px] font-black text-slate-400 mt-1 uppercase">{f.period}</div>
+                                </div>
+                              );
+                            });
+                        })()}
+                    </div>
                 </div>
              </div>
              <div className="space-y-3 pb-10">
