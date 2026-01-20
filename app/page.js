@@ -9,9 +9,50 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
+// Helper to get current ET date/time
 const getETDate = () => {
   const now = new Date();
-  return new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const etString = now.toLocaleString("en-US", { timeZone: "America/New_York" });
+  return new Date(etString);
+};
+
+// Helper to get ET date string (YYYY-MM-DD) from any date
+const getETDateString = (date) => {
+  const etDate = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const year = etDate.getFullYear();
+  const month = String(etDate.getMonth() + 1).padStart(2, '0');
+  const day = String(etDate.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// Helper to convert UTC timestamp to ET date string
+const utcToETDateString = (utcTimestamp) => {
+  const utcDate = new Date(utcTimestamp);
+  return getETDateString(utcDate);
+};
+
+// Helper to get current ET period (AM/PM)
+const getETPeriod = () => {
+  const etNow = getETDate();
+  return etNow.getHours() < 12 ? 'AM' : 'PM';
+};
+
+// Calculate calf age in days (updates at midnight ET)
+const getCalfAgeDays = (birthDateString) => {
+  // Parse birth date as ET
+  const birthDate = new Date(birthDateString);
+  const birthETString = getETDateString(birthDate);
+  
+  // Get today's ET date string
+  const todayETString = getETDateString(getETDate());
+  
+  // Calculate difference in days
+  const birthET = new Date(birthETString);
+  const todayET = new Date(todayETString);
+  const diffTime = todayET - birthET;
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  
+  return diffDays;
 };
 
 export default function CalfTracker() {
@@ -30,7 +71,11 @@ export default function CalfTracker() {
   const [pinInput, setPinInput] = useState('');
   const [filterProtocol, setFilterProtocol] = useState('all');
   const [settings, setSettings] = useState({ nextCalfNumber: 1000, nextBullNumber: 1 });
-  const [newCalf, setNewCalf] = useState({ name: '', birthDate: getETDate().toISOString().slice(0, 16), isBull: false });
+  const [newCalf, setNewCalf] = useState({ 
+    name: '', 
+    birthDate: new Date(getETDate().getTime() - getETDate().getTimezoneOffset() * 60000).toISOString().slice(0, 16), 
+    isBull: false 
+  });
   
   const [noteBuffer, setNoteBuffer] = useState({});
   const [treatmentBuffer, setTreatmentBuffer] = useState({});
@@ -98,25 +143,36 @@ export default function CalfTracker() {
       if (newCalf.isBull) await saveGlobalSetting('nextBullNumber', settings.nextBullNumber + 1);
       else if (dbNumberValue === settings.nextCalfNumber) await saveGlobalSetting('nextCalfNumber', settings.nextCalfNumber + 1);
       setShowAddCalf(false);
-      setNewCalf({ name: '', birthDate: getETDate().toISOString().slice(0, 16), isBull: false });
+      setNewCalf({ 
+        name: '', 
+        birthDate: new Date(getETDate().getTime() - getETDate().getTimezoneOffset() * 60000).toISOString().slice(0, 16), 
+        isBull: false 
+      });
       await loadAllData();
     }
   };
 
   const recordFeeding = async (calf, consumption) => {
     const etNow = getETDate();
-    const period = etNow.getHours() < 12 ? 'AM' : 'PM';
-    const today = etNow.toISOString().slice(0, 10);
+    const period = getETPeriod();
+    const todayET = getETDateString(etNow);
     const calfKey = calf.bull_number || calf.number;
     
-    const existing = feedings.find(f => 
-      (calf.type === 'bull' ? f.bull_number === calf.bull_number : f.calf_number === calf.number) && 
-      f.timestamp.startsWith(today) && f.period === period
-    );
+    // Find existing feeding for this calf, today (ET), and current period
+    const existing = feedings.find(f => {
+      const feedingETDate = utcToETDateString(f.timestamp);
+      const matchesCalf = calf.type === 'bull' 
+        ? f.bull_number === calf.bull_number 
+        : f.calf_number === calf.number;
+      const matchesDate = feedingETDate === todayET;
+      const matchesPeriod = f.period === period;
+      
+      return matchesCalf && matchesDate && matchesPeriod;
+    });
 
     const feedingData = {
       consumption,
-      timestamp: etNow.toISOString(),
+      timestamp: new Date().toISOString(), // Store as UTC
       notes: noteBuffer[calfKey] !== undefined ? noteBuffer[calfKey] : (existing ? existing.notes : null),
       treatment: treatmentBuffer[calfKey] !== undefined ? treatmentBuffer[calfKey] : (existing ? existing.treatment : false),
       user_name: currentUser.name,
@@ -126,22 +182,24 @@ export default function CalfTracker() {
       period,
     };
 
-    if (existing) await supabase.from('feedings').update(feedingData).eq('id', existing.id);
-    else await supabase.from('feedings').insert([feedingData]);
+    if (existing) {
+      await supabase.from('feedings').update(feedingData).eq('id', existing.id);
+    } else {
+      await supabase.from('feedings').insert([feedingData]);
+    }
 
     setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
     setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
     await loadAllData();
   };
 
-  const getCalfAge = (date) => Math.floor((getETDate() - new Date(date)) / (1000 * 60 * 60 * 24));
   const getCalfFeedings = (calf) => feedings.filter(f => 
     calf.type === 'bull' ? f.bull_number === calf.bull_number : f.calf_number === calf.number
   ).sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
 
   const getProtocolStatus = (calf) => {
     if (calf.type === 'bull') return 'Bull (Bottle)';
-    const age = getCalfAge(calf.birth_date);
+    const age = getCalfAgeDays(calf.birth_date);
     const count = getCalfFeedings(calf).length;
     for (let p of protocols) {
       if (p.type === 'feedings' && count < p.value) return p.name;
@@ -189,7 +247,7 @@ export default function CalfTracker() {
           <header className="bg-blue-700 text-white p-6 sticky top-0 z-40 shadow-lg flex justify-between items-center">
             <div>
               <h1 className="font-black text-2xl italic tracking-tighter uppercase">Calf Tracker</h1>
-              <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">{currentUser.name} • {getETDate().getHours() < 12 ? 'AM' : 'PM'} Shift</p>
+              <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">{currentUser.name} • {getETPeriod()} Shift</p>
             </div>
             <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full active:scale-90 transition-transform"><Settings size={20}/></button>
           </header>
@@ -254,10 +312,10 @@ export default function CalfTracker() {
                     <CalfCard 
                       key={calf.id} 
                       calf={calf} 
-                      age={getCalfAge(calf.birth_date)}
+                      age={getCalfAgeDays(calf.birth_date)}
                       protocol={getProtocolStatus(calf)}
                       history={getCalfFeedings(calf)}
-                      currentPeriod={getETDate().getHours() < 12 ? 'AM' : 'PM'}
+                      currentPeriod={getETPeriod()}
                       onRecord={(pct) => recordFeeding(calf, pct)}
                       onStatus={(id, s) => { if(confirm(`Mark as ${s}?`)) supabase.from('calves').update({status: s}).eq('id', id).then(loadAllData); }}
                       onShowHistory={() => setSelectedCalfHistory(calf)}
@@ -335,20 +393,27 @@ export default function CalfTracker() {
                     <BarChart3 size={18}/>
                     <span className="text-xs font-black uppercase tracking-widest">Growth Curve</span>
                 </div>
-                <div className="flex items-end justify-between h-32 gap-1 px-1 border-b-2 border-slate-50 pb-1">
+                <div className="flex items-end justify-between h-32 gap-1 px-1 border-b-2 border-slate-200 pb-1">
                     {(() => {
                         const allFeedings = getCalfFeedings(selectedCalfHistory);
-                        const latest14 = [...allFeedings].slice(0, 14).reverse();
-                        if(latest14.length === 0) return <div className="w-full h-full flex items-center justify-center text-[10px] font-black text-slate-200 uppercase italic">No Data</div>;
-                        return latest14.map((f, i) => (
-                            <div key={i} className="flex-1 flex flex-col items-center group">
+                        const latest14 = allFeedings.slice(0, 14).reverse();
+                        
+                        if(latest14.length === 0) {
+                          return <div className="w-full h-full flex items-center justify-center text-[10px] font-black text-slate-200 uppercase italic">No Data</div>;
+                        }
+                        
+                        return latest14.map((f, i) => {
+                          const height = Math.max((f.consumption / 100) * 100, 8);
+                          return (
+                            <div key={i} className="flex-1 flex flex-col items-center group relative">
                                 <div 
-                                    className={`w-full rounded-t-sm transition-all duration-700 ${f.consumption >= 100 ? 'bg-green-400' : f.consumption >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`}
-                                    style={{ height: `${Math.max(f.consumption, 8)}%` }} 
+                                    className={`w-full rounded-t-sm transition-all ${f.consumption >= 100 ? 'bg-green-400' : f.consumption >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`}
+                                    style={{ height: `${height}%` }} 
                                 />
-                                <div className="text-[6px] font-black text-slate-300 mt-1 uppercase transform -rotate-45">{f.period}</div>
+                                <div className="text-[6px] font-black text-slate-300 mt-1 uppercase">{f.period}</div>
                             </div>
-                        ));
+                          );
+                        });
                     })()}
                 </div>
              </div>
@@ -399,11 +464,14 @@ export default function CalfTracker() {
   );
 }
 
-// THE MISSING COMPONENT
+// CalfCard Component
 function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onStatus, onShowHistory, noteValue, setNoteValue, treatmentValue, setTreatmentValue }) {
   const latest = [...history].slice(0, 3).reverse();
-  const todayStr = getETDate().toISOString().slice(0, 10);
-  const todayFeeding = history.find(f => f.timestamp.startsWith(todayStr) && f.period === currentPeriod);
+  const todayET = getETDateString(getETDate());
+  const todayFeeding = history.find(f => {
+    const feedingET = utcToETDateString(f.timestamp);
+    return feedingET === todayET && f.period === currentPeriod;
+  });
 
   const displayNote = noteValue !== undefined ? noteValue : (todayFeeding?.notes || '');
   const displayTreatment = treatmentValue !== undefined ? treatmentValue : (todayFeeding?.treatment || false);
