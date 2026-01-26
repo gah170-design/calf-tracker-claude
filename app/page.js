@@ -153,6 +153,8 @@ export default function CalfTracker() {
   };
 
   const recordFeeding = async (calf, consumption) => {
+    console.log('Recording feeding for:', calf.bull_number || calf.number, 'Type:', calf.type);
+    
     const etNow = getETDate();
     const period = getETPeriod();
     const todayET = getETDateString(etNow);
@@ -167,8 +169,12 @@ export default function CalfTracker() {
       const matchesDate = feedingETDate === todayET;
       const matchesPeriod = f.period === period;
       
+      console.log('Checking feeding:', f.id, 'Matches:', matchesCalf, matchesDate, matchesPeriod);
+      
       return matchesCalf && matchesDate && matchesPeriod;
     });
+
+    console.log('Existing feeding:', existing);
 
     const feedingData = {
       consumption,
@@ -182,15 +188,25 @@ export default function CalfTracker() {
       period,
     };
 
-    if (existing) {
-      await supabase.from('feedings').update(feedingData).eq('id', existing.id);
-    } else {
-      await supabase.from('feedings').insert([feedingData]);
-    }
+    console.log('Feeding data to save:', feedingData);
 
-    setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
-    setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
-    await loadAllData();
+    try {
+      if (existing) {
+        const { data, error } = await supabase.from('feedings').update(feedingData).eq('id', existing.id);
+        console.log('Update result:', data, error);
+        if (error) console.error('Update error:', error);
+      } else {
+        const { data, error } = await supabase.from('feedings').insert([feedingData]);
+        console.log('Insert result:', data, error);
+        if (error) console.error('Insert error:', error);
+      }
+
+      setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
+      setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
+      await loadAllData();
+    } catch (err) {
+      console.error('recordFeeding error:', err);
+    }
   };
 
   const getCalfFeedings = (calf) => feedings.filter(f => 
@@ -328,7 +344,19 @@ export default function CalfTracker() {
                       history={getCalfFeedings(calf)}
                       currentPeriod={getETPeriod()}
                       onRecord={(pct) => recordFeeding(calf, pct)}
-                      onStatus={(id, s) => { if(confirm(`Mark as ${s}?`)) supabase.from('calves').update({status: s}).eq('id', id).then(loadAllData); }}
+                      onStatus={(id, s) => { 
+                        if(confirm(`Mark as ${s}?`)) {
+                          if(calf.type === 'bull') {
+                            // For bulls, delete all their feeding records first, then delete the calf
+                            supabase.from('feedings').delete().eq('bull_number', calf.bull_number).then(() => {
+                              supabase.from('calves').delete().eq('id', id).then(loadAllData);
+                            });
+                          } else {
+                            // For heifers, just update status as before
+                            supabase.from('calves').update({status: s}).eq('id', id).then(loadAllData);
+                          }
+                        }
+                      }}
                       onShowHistory={() => setSelectedCalfHistory(calf)}
                       noteValue={noteBuffer[calf.bull_number || calf.number]}
                       setNoteValue={(val) => setNoteBuffer(prev => ({...prev, [calf.bull_number || calf.number]: val}))}
@@ -501,7 +529,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
         </div>
         <div className="flex gap-2">
           {calf.type === 'bull' && <button onClick={() => onStatus(calf.id, 'sold')} className="p-3 bg-blue-50 text-blue-600 rounded-2xl transition-colors"><ShoppingCart size={20}/></button>}
-          <button onClick={() => onStatus(calf.id, 'died')} className="p-3 bg-red-50 text-red-400 rounded-2xl transition-colors"><Ghost size={20}/></button>
+          <button onClick={() => onStatus(calf.id, calf.type === 'bull' ? 'died' : 'died')} className="p-3 bg-red-50 text-red-400 rounded-2xl transition-colors"><Ghost size={20}/></button>
         </div>
       </div>
 
