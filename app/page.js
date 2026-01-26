@@ -83,6 +83,19 @@ export default function CalfTracker() {
   useEffect(() => {
     const init = async () => {
       await loadAllData();
+      
+      // Check for saved user in localStorage
+      const savedUser = localStorage.getItem('calfTrackerUser');
+      if (savedUser) {
+        try {
+          const user = JSON.parse(savedUser);
+          setCurrentUser(user);
+        } catch (err) {
+          console.error('Error loading saved user:', err);
+          localStorage.removeItem('calfTrackerUser');
+        }
+      }
+      
       setLoading(false);
     };
     init();
@@ -263,7 +276,17 @@ export default function CalfTracker() {
               <div className="bg-white rounded-[3rem] p-8 w-full max-w-xs space-y-4 shadow-2xl">
                 <h2 className="font-black italic uppercase text-slate-800 text-center">Pin for {selectedUser.name}</h2>
                 <input type="password" inputMode="numeric" maxLength="4" value={pinInput} onChange={(e) => setPinInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center text-3xl font-black tracking-widest outline-none border-2 border-transparent focus:border-blue-600 text-blue-600" autoFocus />
-                <button onClick={() => { if(pinInput === selectedUser.pin) { setCurrentUser(selectedUser); setShowPinEntry(false); setPinInput(''); } else { alert("Wrong Pin"); setPinInput(''); }}} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg uppercase">Unlock</button>
+                <button onClick={() => { 
+                  if(pinInput === selectedUser.pin) { 
+                    setCurrentUser(selectedUser); 
+                    localStorage.setItem('calfTrackerUser', JSON.stringify(selectedUser));
+                    setShowPinEntry(false); 
+                    setPinInput(''); 
+                  } else { 
+                    alert("Wrong Pin"); 
+                    setPinInput(''); 
+                  }
+                }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg uppercase">Unlock</button>
                 <button onClick={() => { setShowPinEntry(false); setPinInput(''); }} className="w-full text-slate-400 font-black text-xs uppercase">Cancel</button>
               </div>
             </div>
@@ -411,7 +434,11 @@ export default function CalfTracker() {
                 ))}
               </div>
             </section>
-            <button onClick={() => { setCurrentUser(null); setShowSettings(false); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black uppercase">Logout</button>
+            <button onClick={() => { 
+              setCurrentUser(null); 
+              localStorage.removeItem('calfTrackerUser');
+              setShowSettings(false); 
+            }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black uppercase">Logout</button>
           </div>
         </div>
       )}
