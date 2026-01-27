@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, LogOut, Save, Trash2, Users, ListChecks, Hash, Edit3, BarChart3 } from 'lucide-react';
+import { Plus, Settings, X, ChevronLeft, Activity, ShoppingCart, Ghost, ClipboardCheck, CheckCircle2, Trash2, ListChecks, Hash, BarChart3, Download } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -9,14 +9,12 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-// Helper to get current ET date/time
 const getETDate = () => {
   const now = new Date();
   const etString = now.toLocaleString("en-US", { timeZone: "America/New_York" });
   return new Date(etString);
 };
 
-// Helper to get ET date string (YYYY-MM-DD) from any date
 const getETDateString = (date) => {
   const etDate = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
   const year = etDate.getFullYear();
@@ -25,35 +23,28 @@ const getETDateString = (date) => {
   return `${year}-${month}-${day}`;
 };
 
-// Helper to convert UTC timestamp to ET date string
 const utcToETDateString = (utcTimestamp) => {
   const utcDate = new Date(utcTimestamp);
   return getETDateString(utcDate);
 };
 
-// Helper to get current ET period (AM/PM)
 const getETPeriod = () => {
   const etNow = getETDate();
   return etNow.getHours() < 12 ? 'AM' : 'PM';
 };
 
-// Calculate calf age in days (updates at midnight ET)
 const getCalfAgeDays = (birthDateString) => {
-  // Parse birth date as ET
   const birthDate = new Date(birthDateString);
   const birthETString = getETDateString(birthDate);
-  
-  // Get today's ET date string
   const todayETString = getETDateString(getETDate());
-  
-  // Calculate difference in days
   const birthET = new Date(birthETString);
   const todayET = new Date(todayETString);
   const diffTime = todayET - birthET;
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-  
   return diffDays;
 };
+
+const DIAGNOSES = ['Scours', 'Respiratory/Pneumonia', 'High Fever', 'Unknown'];
 
 export default function CalfTracker() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -62,6 +53,10 @@ export default function CalfTracker() {
   const [feedings, setFeedings] = useState([]);
   const [users, setUsers] = useState([]);
   const [protocols, setProtocols] = useState([]);
+  const [medicines, setMedicines] = useState([]);
+  const [treatmentPlans, setTreatmentPlans] = useState([]);
+  const [treatmentMedicines, setTreatmentMedicines] = useState([]);
+  const [treatmentLogs, setTreatmentLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddCalf, setShowAddCalf] = useState(false);
@@ -78,13 +73,20 @@ export default function CalfTracker() {
   });
   
   const [noteBuffer, setNoteBuffer] = useState({});
-  const [treatmentBuffer, setTreatmentBuffer] = useState({});
+
+  const [showNewDiagnosis, setShowNewDiagnosis] = useState(false);
+  const [showTreatmentPlan, setShowTreatmentPlan] = useState(false);
+  const [selectedCalfForTreatment, setSelectedCalfForTreatment] = useState(null);
+  const [newDiagnosis, setNewDiagnosis] = useState('Scours');
+  const [newTreatmentMedicines, setNewTreatmentMedicines] = useState([]);
+  const [showMedicineForm, setShowMedicineForm] = useState(false);
+  const [newMedicine, setNewMedicine] = useState({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
+  const [editingTreatmentId, setEditingTreatmentId] = useState(null);
+  const [addExistingMedicine, setAddExistingMedicine] = useState({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
 
   useEffect(() => {
     const init = async () => {
       await loadAllData();
-      
-      // Check for saved user in localStorage
       const savedUser = localStorage.getItem('calfTrackerUser');
       if (savedUser) {
         try {
@@ -95,7 +97,6 @@ export default function CalfTracker() {
           localStorage.removeItem('calfTrackerUser');
         }
       }
-      
       setLoading(false);
     };
     init();
@@ -111,6 +112,14 @@ export default function CalfTracker() {
       if (u) setUsers(u);
       const { data: p } = await supabase.from('protocols').select('*').order('order', { ascending: true });
       if (p) setProtocols(p);
+      const { data: m } = await supabase.from('medicines').select('*').order('name', { ascending: true });
+      if (m) setMedicines(m);
+      const { data: tp } = await supabase.from('treatment_plans').select('*').eq('completed', false);
+      if (tp) setTreatmentPlans(tp);
+      const { data: tm } = await supabase.from('treatment_medicines').select('*');
+      if (tm) setTreatmentMedicines(tm);
+      const { data: tl } = await supabase.from('treatment_logs').select('*').order('timestamp', { ascending: false });
+      if (tl) setTreatmentLogs(tl);
       const { data: s } = await supabase.from('settings').select('*');
       if (s) {
         const ncn = s.find(item => item.setting_key === 'next_calf_number');
@@ -166,14 +175,11 @@ export default function CalfTracker() {
   };
 
   const recordFeeding = async (calf, consumption) => {
-    console.log('Recording feeding for:', calf.bull_number || calf.number, 'Type:', calf.type);
-    
     const etNow = getETDate();
     const period = getETPeriod();
     const todayET = getETDateString(etNow);
     const calfKey = calf.bull_number || calf.number;
     
-    // Find existing feeding for this calf, today (ET), and current period
     const existing = feedings.find(f => {
       const feedingETDate = utcToETDateString(f.timestamp);
       const matchesCalf = calf.type === 'bull' 
@@ -181,19 +187,14 @@ export default function CalfTracker() {
         : f.calf_number === calf.number;
       const matchesDate = feedingETDate === todayET;
       const matchesPeriod = f.period === period;
-      
-      console.log('Checking feeding:', f.id, 'Matches:', matchesCalf, matchesDate, matchesPeriod);
-      
       return matchesCalf && matchesDate && matchesPeriod;
     });
 
-    console.log('Existing feeding:', existing);
-
     const feedingData = {
       consumption,
-      timestamp: new Date().toISOString(), // Store as UTC
+      timestamp: new Date().toISOString(),
       notes: noteBuffer[calfKey] !== undefined ? noteBuffer[calfKey] : (existing ? existing.notes : null),
-      treatment: treatmentBuffer[calfKey] !== undefined ? treatmentBuffer[calfKey] : (existing ? existing.treatment : false),
+      treatment: false,
       user_name: currentUser.name,
       calf_number: calf.type !== 'bull' ? calf.number : null,
       bull_number: calf.type === 'bull' ? calf.bull_number : null,
@@ -201,21 +202,13 @@ export default function CalfTracker() {
       period,
     };
 
-    console.log('Feeding data to save:', feedingData);
-
     try {
       if (existing) {
-        const { data, error } = await supabase.from('feedings').update(feedingData).eq('id', existing.id);
-        console.log('Update result:', data, error);
-        if (error) console.error('Update error:', error);
+        await supabase.from('feedings').update(feedingData).eq('id', existing.id);
       } else {
-        const { data, error } = await supabase.from('feedings').insert([feedingData]);
-        console.log('Insert result:', data, error);
-        if (error) console.error('Insert error:', error);
+        await supabase.from('feedings').insert([feedingData]);
       }
-
       setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
-      setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
       await loadAllData();
     } catch (err) {
       console.error('recordFeeding error:', err);
@@ -230,28 +223,184 @@ export default function CalfTracker() {
     if (calf.type === 'bull') return 'Bull (Bottle)';
     const age = getCalfAgeDays(calf.birth_date);
     const count = getCalfFeedings(calf).length;
-    
-    // Sort protocols by order to check them in sequence
     const sortedProtocols = [...protocols].sort((a, b) => a.order - b.order);
-    
     for (let p of sortedProtocols) {
       if (p.type === 'feedings' && count < p.value) return p.name;
       if (p.type === 'days' && age < p.value) return p.name;
     }
-    
-    // If they've exceeded all protocols, they're on the last one (Weaned)
     const lastProtocol = sortedProtocols[sortedProtocols.length - 1];
     return lastProtocol ? lastProtocol.name : "Weaned";
+  };
+
+  const getCalfTreatmentPlans = (calf) => treatmentPlans.filter(tp => tp.calf_id === calf.id);
+  const getTreatmentMedicinesForPlan = (planId) => treatmentMedicines.filter(tm => tm.treatment_plan_id === planId);
+
+  const getTreatmentGivenToday = (calf) => {
+    const todayET = getETDateString(getETDate());
+    const plans = getCalfTreatmentPlans(calf);
+    for (let plan of plans) {
+      const log = treatmentLogs.find(tl => {
+        const logDate = utcToETDateString(tl.timestamp);
+        return tl.treatment_plan_id === plan.id && logDate === todayET;
+      });
+      if (log) return true;
+    }
+    return false;
+  };
+
+  const markTreatmentGiven = async (calf) => {
+    const todayET = getETDateString(getETDate());
+    const plans = getCalfTreatmentPlans(calf);
+    for (let plan of plans) {
+      const existing = treatmentLogs.find(tl => {
+        const logDate = utcToETDateString(tl.timestamp);
+        return tl.treatment_plan_id === plan.id && logDate === todayET;
+      });
+      if (!existing) {
+        await supabase.from('treatment_logs').insert([{
+          treatment_plan_id: plan.id,
+          user_name: currentUser.name,
+          timestamp: new Date().toISOString()
+        }]);
+      }
+    }
+    await loadAllData();
+  };
+
+  const addMedicineToNewDiagnosis = async () => {
+    if (!newMedicine.name || !newMedicine.dosage) {
+      alert('Fill in medicine name and dosage');
+      return;
+    }
+    if (!medicines.find(m => m.name === newMedicine.name)) {
+      await supabase.from('medicines').insert([{ name: newMedicine.name }]);
+      await loadAllData();
+    }
+    setNewTreatmentMedicines([...newTreatmentMedicines, { ...newMedicine, id: Date.now() }]);
+    setNewMedicine({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
+    setShowMedicineForm(false);
+  };
+
+  const saveDiagnosis = async () => {
+    if (newTreatmentMedicines.length === 0) {
+      alert('Add at least one medicine');
+      return;
+    }
+    const { data: plan, error: planError } = await supabase.from('treatment_plans').insert([{
+      calf_id: selectedCalfForTreatment.id,
+      diagnosis: newDiagnosis,
+      start_date: new Date().toISOString()
+    }]).select();
+    if (!planError && plan) {
+      const planId = plan[0].id;
+      for (let med of newTreatmentMedicines) {
+        await supabase.from('treatment_medicines').insert([{
+          treatment_plan_id: planId,
+          medicine_name: med.name,
+          dosage: med.dosage,
+          frequency_hours: med.hours,
+          total_treatments: med.totalTreatments,
+          completed_treatments: 0
+        }]);
+      }
+      setNewTreatmentMedicines([]);
+      setNewDiagnosis('Scours');
+      setShowNewDiagnosis(false);
+      setSelectedCalfForTreatment(null);
+      await loadAllData();
+    }
+  };
+
+  const addMedicineToExisting = async (treatmentPlanId) => {
+    if (!addExistingMedicine.name || !addExistingMedicine.dosage) {
+      alert('Fill in all medicine fields');
+      return;
+    }
+    if (!medicines.find(m => m.name === addExistingMedicine.name)) {
+      await supabase.from('medicines').insert([{ name: addExistingMedicine.name }]);
+    }
+    await supabase.from('treatment_medicines').insert([{
+      treatment_plan_id: treatmentPlanId,
+      medicine_name: addExistingMedicine.name,
+      dosage: addExistingMedicine.dosage,
+      frequency_hours: addExistingMedicine.hours,
+      total_treatments: addExistingMedicine.totalTreatments,
+      completed_treatments: 0
+    }]);
+    setAddExistingMedicine({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
+    setEditingTreatmentId(null);
+    await loadAllData();
+  };
+
+  const deleteTreatmentPlan = async (planId) => {
+    if (confirm('Delete this treatment plan?')) {
+      await supabase.from('treatment_plans').delete().eq('id', planId);
+      await loadAllData();
+    }
+  };
+
+  const completeTreatmentPlan = async (planId) => {
+    if (confirm('Mark this treatment as complete?')) {
+      await supabase.from('treatment_plans').update({ 
+        completed: true, 
+        completed_at: new Date().toISOString() 
+      }).eq('id', planId);
+      await loadAllData();
+    }
+  };
+
+  const deleteTreatmentMedicine = async (medicineId) => {
+    if (confirm('Remove this medicine?')) {
+      await supabase.from('treatment_medicines').delete().eq('id', medicineId);
+      await loadAllData();
+    }
+  };
+
+  const getShiftSchedule = (hours) => {
+    if (hours === 12) return 'AM & PM';
+    if (hours === 24) return 'Once Daily';
+    if (hours === 48) return 'Every Other Day';
+    if (hours === 72) return 'Every 3 Days';
+    return `Every ${hours}hrs`;
+  };
+
+  const calculateProgress = (planId) => {
+    const planLogs = treatmentLogs.filter(tl => tl.treatment_plan_id === planId);
+    const meds = getTreatmentMedicinesForPlan(planId);
+    if (meds.length === 0) return 'Day 1';
+    const maxTreatments = Math.max(...meds.map(m => m.total_treatments));
+    return `Day ${planLogs.length + 1} of ${maxTreatments}`;
+  };
+
+  const exportToCSV = () => {
+    const csvData = [];
+    csvData.push(['Calf Number', 'Name', 'Type', 'Birth Date', 'Age (Days)', 'Protocol', 'Status', 'Date', 'Period', 'Consumption', 'Notes', 'User']);
+    calves.forEach(calf => {
+      const calfFeedings = getCalfFeedings(calf);
+      const age = getCalfAgeDays(calf.birth_date);
+      const protocol = getProtocolStatus(calf);
+      if (calfFeedings.length === 0) {
+        csvData.push([calf.bull_number || calf.number, calf.name || '', calf.type, calf.birth_date, age, protocol, calf.status, '', '', '', '', '']);
+      } else {
+        calfFeedings.forEach(f => {
+          csvData.push([calf.bull_number || calf.number, calf.name || '', calf.type, calf.birth_date, age, protocol, calf.status, new Date(f.timestamp).toLocaleDateString(), f.period, f.consumption, f.notes || '', f.user_name]);
+        });
+      }
+    });
+    const csvContent = csvData.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `calf-data-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center font-black uppercase italic text-blue-600">Syncing Farm Data...</div>;
 
   const activeHeifers = calves.filter(c => c.status === 'active' && c.type !== 'bull');
   const activeBulls = calves.filter(c => c.status === 'active' && c.type === 'bull');
-  
-  // Only count heifers that are NOT weaned yet
   const heifersOnProtocol = activeHeifers.filter(c => getProtocolStatus(c) !== 'Weaned');
-  
   const flaggedCalves = activeHeifers.filter(c => {
     const history = getCalfFeedings(c).slice(0, 2);
     return history.length >= 2 && history.every(f => f.consumption <= 50);
@@ -263,7 +412,7 @@ export default function CalfTracker() {
         <div className="h-screen bg-slate-900 flex items-center justify-center p-6 text-center">
           <div className="bg-white rounded-[3rem] p-10 w-full max-w-sm shadow-2xl">
             <h1 className="font-black text-3xl mb-8 italic tracking-tighter uppercase text-slate-900 leading-none">Operator Login</h1>
-            <div className="space-y-4 text-left overflow-y-auto max-h-[60vh] no-scrollbar">
+            <div className="space-y-4 text-left overflow-y-auto max-h-[60vh]">
               {users.map(u => (
                 <button key={u.id} onClick={() => { setSelectedUser(u); setShowPinEntry(true); }} className="w-full p-6 bg-slate-100 rounded-3xl font-black transition-all uppercase flex justify-between items-center group text-slate-700 active:bg-blue-600 active:text-white">
                   {u.name} <Activity className="opacity-0 group-hover:opacity-100" />
@@ -344,7 +493,7 @@ export default function CalfTracker() {
                     <button onClick={() => { setCurrentPage('dashboard'); setFilterProtocol('all'); }} className="flex items-center text-blue-600 font-black text-xs uppercase bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16}/> Back</button>
                     
                     {currentPage !== 'flagged' && currentPage !== 'bulls' && (
-                        <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                        <div className="flex gap-2 overflow-x-auto pb-2">
                             <button onClick={() => setFilterProtocol('all')} className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>All Heifers</button>
                             {protocols.map(p => (
                                 <button key={p.id} onClick={() => setFilterProtocol(p.name)} className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === p.name ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>{p.name}</button>
@@ -370,240 +519,14 @@ export default function CalfTracker() {
                       onStatus={(id, s) => { 
                         if(confirm(`Mark as ${s}?`)) {
                           if(calf.type === 'bull') {
-                            // For bulls, delete all their feeding records first, then delete the calf
                             supabase.from('feedings').delete().eq('bull_number', calf.bull_number).then(() => {
                               supabase.from('calves').delete().eq('id', id).then(loadAllData);
                             });
                           } else {
-                            // For heifers, just update status as before
                             supabase.from('calves').update({status: s}).eq('id', id).then(loadAllData);
                           }
                         }
                       }}
                       onShowHistory={() => setSelectedCalfHistory(calf)}
                       noteValue={noteBuffer[calf.bull_number || calf.number]}
-                      setNoteValue={(val) => setNoteBuffer(prev => ({...prev, [calf.bull_number || calf.number]: val}))}
-                      treatmentValue={treatmentBuffer[calf.bull_number || calf.number]}
-                      setTreatmentValue={(val) => setTreatmentBuffer(prev => ({...prev, [calf.bull_number || calf.number]: val}))}
-                    />
-                  ))
-                }
-              </div>
-            )}
-          </main>
-        </>
-      )}
-
-      {/* SETTINGS MODAL */}
-      {showSettings && (
-        <div className="fixed inset-0 bg-white z-[100] flex flex-col overflow-y-auto pb-10">
-          <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
-            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Farm Settings</h2>
-            <button onClick={() => { setShowSettings(false); loadAllData(); }} className="p-3 bg-slate-200 rounded-full"><X size={24}/></button>
-          </div>
-          <div className="p-6 space-y-10">
-            <section className="space-y-4">
-                <div className="flex items-center gap-2 text-blue-600 font-black uppercase text-xs tracking-widest"><Hash size={16}/> Counter Control</div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase">Next Heifer #</label>
-                        <input type="number" value={settings.nextCalfNumber} onChange={(e) => saveGlobalSetting('nextCalfNumber', e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl font-black text-xl border-0" />
-                    </div>
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase">Next Bull #</label>
-                        <input type="number" value={settings.nextBullNumber} onChange={(e) => saveGlobalSetting('nextBullNumber', e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl font-black text-xl border-0" />
-                    </div>
-                </div>
-            </section>
-            <section className="space-y-4">
-              <div className="flex items-center justify-between text-blue-600 font-black uppercase text-xs">
-                 <div className="flex items-center gap-2"><ListChecks size={16}/> Protocols</div>
-                 <button onClick={() => {
-                    const name = prompt("Protocol Name");
-                    if(name) supabase.from('protocols').insert([{name, type:'feedings', value: 4, order: protocols.length}]).then(() => loadAllData());
-                 }} className="p-2 bg-blue-50 rounded-xl"><Plus size={18}/></button>
-              </div>
-              <div className="space-y-3">
-                {protocols.map(p => (
-                   <div key={p.id} className="p-4 bg-slate-50 rounded-2xl border flex items-center gap-4">
-                      <div className="flex-1">
-                         <input defaultValue={p.name} onBlur={(e) => supabase.from('protocols').update({name: e.target.value}).eq('id', p.id)} className="font-black uppercase bg-transparent text-sm w-full outline-none" />
-                      </div>
-                      <button onClick={() => {if(confirm("Delete?")) supabase.from('protocols').delete().eq('id', p.id).then(() => loadAllData())}} className="text-red-300"><Trash2 size={18}/></button>
-                   </div>
-                ))}
-              </div>
-            </section>
-            <button onClick={() => { 
-              setCurrentUser(null); 
-              localStorage.removeItem('calfTrackerUser');
-              setShowSettings(false); 
-            }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black uppercase">Logout</button>
-          </div>
-        </div>
-      )}
-
-      {/* HISTORY MODAL WITH GRAPH */}
-      {selectedCalfHistory && (
-        <div className="fixed inset-0 bg-white z-[100] flex flex-col">
-          <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
-            <div>
-                <h2 className="text-3xl font-black italic text-slate-900 uppercase">#{selectedCalfHistory.bull_number || selectedCalfHistory.number}</h2>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Timeline (Past 14 Shifts)</p>
-            </div>
-            <button onClick={() => setSelectedCalfHistory(null)} className="p-3 bg-slate-100 rounded-full"><X size={24}/></button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-50">
-             <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
-                <div className="flex items-center gap-2 mb-6 text-blue-600">
-                    <BarChart3 size={18}/>
-                    <span className="text-xs font-black uppercase tracking-widest">Growth Curve</span>
-                </div>
-                <div className="relative h-40 bg-slate-50 rounded-xl p-4">
-                    <div className="flex items-end justify-between h-full gap-1">
-                        {(() => {
-                            const allFeedings = getCalfFeedings(selectedCalfHistory);
-                            const latest14 = allFeedings.slice(0, 14).reverse();
-                            
-                            if(latest14.length === 0) {
-                              return <div className="w-full h-full flex items-center justify-center text-[10px] font-black text-slate-300 uppercase italic">No Data Yet</div>;
-                            }
-                            
-                            return latest14.map((f, i) => {
-                              const heightPercent = Math.max(f.consumption, 5);
-                              return (
-                                <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
-                                    <div 
-                                        className={`w-full rounded-t transition-all ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                                        style={{ height: `${heightPercent}%` }} 
-                                    />
-                                    <div className="text-[7px] font-black text-slate-400 mt-1 uppercase">{f.period}</div>
-                                </div>
-                              );
-                            });
-                        })()}
-                    </div>
-                </div>
-             </div>
-             <div className="space-y-3 pb-10">
-                {getCalfFeedings(selectedCalfHistory).map((f, i) => (
-                  <div key={i} className="p-5 bg-white rounded-3xl border border-slate-100 shadow-sm">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
-                        {f.treatment && <span className="text-red-600 font-black text-[10px] uppercase bg-red-50 px-3 py-1.5 rounded-full">Treated</span>}
-                      </div>
-                      {f.notes && <p className="text-sm italic text-slate-600 bg-slate-50 p-3 rounded-xl mb-2">"{f.notes}"</p>}
-                      <p className="text-[10px] font-black text-slate-400 uppercase">{new Date(f.timestamp).toLocaleDateString()} • {f.period}</p>
-                  </div>
-                ))}
-             </div>
-          </div>
-        </div>
-      )}
-
-      {/* FOOTER BUTTON */}
-      <div className="fixed bottom-0 left-0 right-0 p-6 flex justify-center z-30 pointer-events-none">
-        <button onClick={() => setShowAddCalf(true)} className="bg-slate-900 text-white w-full max-w-xs py-5 rounded-[2.5rem] font-black shadow-2xl flex items-center justify-center gap-3 pointer-events-auto active:scale-95 transition-transform">
-          <Plus size={24}/> ADD NEW CALF
-        </button>
-      </div>
-
-      {showAddCalf && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[3rem] p-8 w-full max-w-sm space-y-6 shadow-2xl">
-            <h2 className="text-2xl font-black italic text-slate-800 uppercase">New Entry</h2>
-            <div className="flex gap-2 p-1.5 bg-slate-100 rounded-2xl">
-               <button onClick={() => setNewCalf({...newCalf, isBull: false})} className={`flex-1 py-3 rounded-xl font-black text-xs transition-all ${!newCalf.isBull ? 'bg-white shadow-md text-blue-600' : 'text-slate-400'}`}>HEIFER</button>
-               <button onClick={() => setNewCalf({...newCalf, isBull: true})} className={`flex-1 py-3 rounded-xl font-black text-xs transition-all ${newCalf.isBull ? 'bg-white shadow-md text-blue-800' : 'text-slate-400'}`}>BULL</button>
-            </div>
-            <div className="space-y-4 text-left">
-              <input type="text" placeholder="Name (Optional)" value={newCalf.name} onChange={(e) => setNewCalf({...newCalf, name: e.target.value})} className="w-full p-5 bg-slate-50 rounded-2xl font-bold border-0 outline-none text-slate-800" />
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Birth Date</label>
-                <input type="datetime-local" value={newCalf.birthDate} onChange={(e) => setNewCalf({...newCalf, birthDate: e.target.value})} className="w-full p-5 bg-slate-50 rounded-2xl font-bold border-0 mt-1 outline-none text-slate-800" />
-              </div>
-            </div>
-            <button onClick={addCalf} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg shadow-lg uppercase">Create</button>
-            <button onClick={() => setShowAddCalf(false)} className="w-full text-slate-400 font-black text-xs uppercase text-center">Cancel</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// CalfCard Component
-function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onStatus, onShowHistory, noteValue, setNoteValue, treatmentValue, setTreatmentValue }) {
-  const latest = [...history].slice(0, 3).reverse();
-  const todayET = getETDateString(getETDate());
-  const todayFeeding = history.find(f => {
-    const feedingET = utcToETDateString(f.timestamp);
-    return feedingET === todayET && f.period === currentPeriod;
-  });
-
-  const displayNote = noteValue !== undefined ? noteValue : (todayFeeding?.notes || '');
-  const displayTreatment = treatmentValue !== undefined ? treatmentValue : (todayFeeding?.treatment || false);
-
-  return (
-    <div className={`bg-white p-6 rounded-[2.5rem] shadow-sm border-2 transition-all ${todayFeeding ? 'border-green-200 opacity-90' : (calf.type === 'bull' ? 'border-blue-200' : 'border-slate-100')}`}>
-      <div className="flex justify-between items-start mb-4">
-        <div onClick={onShowHistory} className="cursor-pointer">
-          <div className="flex items-center gap-2">
-            <h3 className="text-4xl font-black italic tracking-tighter text-slate-900 leading-none">#{calf.bull_number || calf.number}</h3>
-            {todayFeeding && <CheckCircle2 className="text-green-500" size={24} />}
-          </div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1 leading-none">{age} Days • {protocol}</p>
-        </div>
-        <div className="flex gap-2">
-          {calf.type === 'bull' && <button onClick={() => onStatus(calf.id, 'sold')} className="p-3 bg-blue-50 text-blue-600 rounded-2xl transition-colors"><ShoppingCart size={20}/></button>}
-          <button onClick={() => onStatus(calf.id, calf.type === 'bull' ? 'died' : 'died')} className="p-3 bg-red-50 text-red-400 rounded-2xl transition-colors"><Ghost size={20}/></button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 mb-4" onClick={onShowHistory}>
-        {latest.length > 0 ? latest.map((f, i) => (
-          <div key={i} className="flex flex-col items-center">
-            <div className={`w-full py-2 rounded-xl text-center text-white text-[9px] font-black shadow-sm ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>
-              {f.consumption}%
-            </div>
-            <div className="text-[11px] font-black text-slate-600 uppercase mt-1 tracking-tight text-center leading-tight">
-              <div>{new Date(f.timestamp).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})}</div>
-              <div className="text-blue-600">{f.period}</div>
-            </div>
-          </div>
-        )) : <div className="col-span-3 py-2 border-2 border-dashed border-slate-50 rounded-xl text-center text-[8px] font-black text-slate-200 uppercase tracking-widest flex items-center justify-center italic">No Feedings</div>}
-      </div>
-
-      <div className="flex gap-2 items-center mb-6">
-        <input 
-          type="text" 
-          placeholder="Shift notes..." 
-          value={displayNote} 
-          onChange={(e) => setNoteValue(e.target.value)} 
-          className="flex-1 p-3 bg-slate-50 border-0 rounded-xl text-xs font-bold outline-none text-slate-800"
-        />
-        <button 
-          onClick={() => setTreatmentValue(!displayTreatment)}
-          className={`p-3 rounded-xl border-2 transition-all flex items-center gap-2 font-black text-[10px] uppercase ${displayTreatment ? 'bg-red-500 border-red-500 text-white shadow-md' : 'bg-white border-slate-100 text-slate-400'}`}
-        >
-          <ClipboardCheck size={16}/> {displayTreatment ? 'Treated' : 'Treat?'}
-        </button>
-      </div>
-
-      <div className="space-y-3">
-        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">{currentPeriod} Feeding</div>
-        <div className="grid grid-cols-5 gap-2">
-          {[0, 25, 50, 75, 100].map(pct => (
-            <button 
-              key={pct} 
-              onClick={() => onRecord(pct)} 
-              className={`py-5 rounded-2xl font-black text-sm transition-all shadow-sm ${todayFeeding?.consumption === pct ? 'bg-blue-600 text-white ring-4 ring-blue-100 scale-95' : 'bg-slate-50 text-slate-300 active:bg-slate-100'}`}
-            >
-              {pct}%
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+                      setNoteValue={(val
