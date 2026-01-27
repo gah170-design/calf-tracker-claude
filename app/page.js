@@ -33,14 +33,21 @@ export default function CalfTracker() {
   const [newCalf, setNewCalf] = useState({ name: '', birthDate: getETDate().toISOString().slice(0, 16), isBull: false });
   
   const [noteBuffer, setNoteBuffer] = useState({});
-  const [treatmentBuffer, setTreatmentBuffer] = useState({});
+const [showNewDiagnosis, setShowNewDiagnosis] = useState(false);
+const [showTreatmentPlan, setShowTreatmentPlan] = useState(false);
+const [selectedCalfForTreatment, setSelectedCalfForTreatment] = useState(null);
+const [newDiagnosis, setNewDiagnosis] = useState('Scours');
+const [newTreatmentMedicines, setNewTreatmentMedicines] = useState([]);
+const [showMedicineForm, setShowMedicineForm] = useState(false);
+const [newMedicine, setNewMedicine] = useState({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
+const [editingTreatmentId, setEditingTreatmentId] = useState(null);
+const [addExistingMedicine, setAddExistingMedicine] = useState({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
 
-  useEffect(() => {
-    const init = async () => {
-      await loadAllData();
-      setLoading(false);
-    };
-    init();
+useEffect(() => {
+  const init = async () => {
+    await loadAllData();
+    setLoading(false);
+  };
   }, []);
 
   const loadAllData = async () => {
@@ -117,7 +124,7 @@ export default function CalfTracker() {
     const feedingData = {
       consumption,
       timestamp: etNow.toISOString(),
-      notes: noteBuffer[calfKey] !== undefined ? noteBuffer[calfKey] : (existing ? existing.notes : null),
+      notes: [calfKey] !== undefined ? [calfKey] : (existing ? existing.notes : null),
       treatment: treatmentBuffer[calfKey] !== undefined ? treatmentBuffer[calfKey] : (existing ? existing.treatment : false),
       user_name: currentUser.name,
       calf_number: calf.type !== 'bull' ? calf.number : null,
@@ -129,7 +136,7 @@ export default function CalfTracker() {
     if (existing) await supabase.from('feedings').update(feedingData).eq('id', existing.id);
     else await supabase.from('feedings').insert([feedingData]);
 
-    setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
+    set(prev => { const n = {...prev}; delete n[calfKey]; return n; });
     setTreatmentBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
     await loadAllData();
   };
@@ -261,8 +268,8 @@ export default function CalfTracker() {
                       onRecord={(pct) => recordFeeding(calf, pct)}
                       onStatus={(id, s) => { if(confirm(`Mark as ${s}?`)) supabase.from('calves').update({status: s}).eq('id', id).then(loadAllData); }}
                       onShowHistory={() => setSelectedCalfHistory(calf)}
-                      noteValue={noteBuffer[calf.bull_number || calf.number]}
-                      setNoteValue={(val) => setNoteBuffer(prev => ({...prev, [calf.bull_number || calf.number]: val}))}
+                      noteValue={[calf.bull_number || calf.number]}
+                      setNoteValue={(val) => set(prev => ({...prev, [calf.bull_number || calf.number]: val}))}
                       treatmentValue={treatmentBuffer[calf.bull_number || calf.number]}
                       setTreatmentValue={(val) => setTreatmentBuffer(prev => ({...prev, [calf.bull_number || calf.number]: val}))}
                     />
@@ -744,4 +751,5 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
 )}</div>
   );
 }
+
 
