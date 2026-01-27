@@ -468,9 +468,6 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
           ))}
         </div>
       </div>
-    // ADD THESE MODALS RIGHT BEFORE THE CLOSING </div> TAG IN YOUR MAIN COMPONENT
-// Place them after the "Add Calf" modal
-
 {/* NEW DIAGNOSIS MODAL */}
 {showNewDiagnosis && selectedCalfForTreatment && (
   <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
@@ -747,3 +744,4 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
 )}</div>
   );
 }
+
