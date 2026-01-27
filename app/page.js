@@ -529,4 +529,64 @@ export default function CalfTracker() {
                       }}
                       onShowHistory={() => setSelectedCalfHistory(calf)}
                       noteValue={noteBuffer[calf.bull_number || calf.number]}
-                      setNoteValue={(val
+                      setNoteValue={(val) => setNoteBuffer(prev => ({...prev, [calf.bull_number || calf.number]: val}))}
+                      treatmentPlans={getCalfTreatmentPlans(calf)}
+                      treatmentGivenToday={getTreatmentGivenToday(calf)}
+                      onMarkTreatmentGiven={() => markTreatmentGiven(calf)}
+                      onNewDiagnosis={() => { setSelectedCalfForTreatment(calf); setShowNewDiagnosis(true); }}
+                      onViewTreatment={() => { setSelectedCalfForTreatment(calf); setShowTreatmentPlan(true); }}
+                      calculateProgress={calculateProgress}
+                    />
+                  ))
+                }
+              </div>
+            )}
+          </main>
+        </>
+      )}
+
+      {/* SETTINGS MODAL */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-white z-[100] flex flex-col overflow-y-auto pb-10">
+          <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
+            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Farm Settings</h2>
+            <button onClick={() => { setShowSettings(false); loadAllData(); }} className="p-3 bg-slate-200 rounded-full"><X size={24}/></button>
+          </div>
+          <div className="p-6 space-y-10">
+            <section className="space-y-4">
+                <div className="flex items-center gap-2 text-blue-600 font-black uppercase text-xs tracking-widest"><Hash size={16}/> Counter Control</div>
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase">Next Heifer #</label>
+                        <input type="number" value={settings.nextCalfNumber} onChange={(e) => saveGlobalSetting('nextCalfNumber', e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl font-black text-xl border-0" />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase">Next Bull #</label>
+                        <input type="number" value={settings.nextBullNumber} onChange={(e) => saveGlobalSetting('nextBullNumber', e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl font-black text-xl border-0" />
+                    </div>
+                </div>
+            </section>
+            <section className="space-y-4">
+              <div className="flex items-center justify-between text-blue-600 font-black uppercase text-xs">
+                 <div className="flex items-center gap-2"><ListChecks size={16}/> Protocols</div>
+                 <button onClick={() => {
+                    const name = prompt("Protocol Name");
+                    if(name) supabase.from('protocols').insert([{name, type:'feedings', value: 4, order: protocols.length}]).then(() => loadAllData());
+                 }} className="p-2 bg-blue-50 rounded-xl"><Plus size={18}/></button>
+              </div>
+              <div className="space-y-3">
+                {protocols.map(p => (
+                   <div key={p.id} className="p-4 bg-slate-50 rounded-2xl border flex items-center gap-4">
+                      <div className="flex-1">
+                         <input defaultValue={p.name} onBlur={(e) => supabase.from('protocols').update({name: e.target.value}).eq('id', p.id)} className="font-black uppercase bg-transparent text-sm w-full outline-none" />
+                      </div>
+                      <button onClick={() => {if(confirm("Delete?")) supabase.from('protocols').delete().eq('id', p.id).then(() => loadAllData())}} className="text-red-300"><Trash2 size={18}/></button>
+                   </div>
+                ))}
+              </div>
+            </section>
+            <button onClick={exportToCSV} className="w-full p-6 bg-green-50 text-green-600 rounded-[2rem] font-black uppercase flex items-center justify-center gap-2"><Download size={20}/> Export CSV</button>
+            <button onClick={() => { setCurrentUser(null); localStorage.removeItem('calfTrackerUser'); setShowSettings(false); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black uppercase">Logout</button>
+          </div>
+        </div>
+      )}
