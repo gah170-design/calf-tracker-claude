@@ -970,18 +970,22 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
       </div>
 
       {treatmentPlans.length > 0 && (
-        <div onClick={onViewTreatment} className="mb-4 p-4 bg-red-50 border-2 border-red-200 rounded-2xl cursor-pointer hover:bg-red-100 transition-all">
+        <div onClick={onViewTreatment} className={`mb-4 p-4 border-2 rounded-2xl cursor-pointer transition-all ${treatmentGivenToday ? 'bg-green-50 border-green-200 hover:bg-green-100' : 'bg-red-50 border-red-200 hover:bg-red-100'}`}>
           <div className="flex items-center gap-3 mb-2">
-            <div className="bg-red-500 text-white p-2 rounded-xl">
-              <Activity size={20} />
+            <div className={`text-white p-2 rounded-xl ${treatmentGivenToday ? 'bg-green-500' : 'bg-red-500'}`}>
+              {treatmentGivenToday ? <CheckCircle2 size={20} /> : <Activity size={20} />}
             </div>
             <div className="flex-1">
-              <div className="font-black text-sm text-red-900 uppercase">Active Treatment</div>
-              <div className="text-xs text-red-600">Tap to view details</div>
+              <div className={`font-black text-sm uppercase ${treatmentGivenToday ? 'text-green-900' : 'text-red-900'}`}>
+                {treatmentGivenToday ? '✓ Treated Today' : 'Active Treatment'}
+              </div>
+              <div className={`text-xs ${treatmentGivenToday ? 'text-green-600' : 'text-red-600'}`}>
+                Tap to view details
+              </div>
             </div>
           </div>
           {treatmentPlans.map(tp => (
-            <div key={tp.id} className="text-xs font-bold text-red-800 ml-11">
+            <div key={tp.id} className={`text-xs font-bold ml-11 ${treatmentGivenToday ? 'text-green-800' : 'text-red-800'}`}>
               {tp.diagnosis} - {calculateProgress(tp.id)}
             </div>
           ))}
@@ -990,7 +994,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
 
       {treatmentPlans.length > 0 && (
         <div className="mb-6">
-          <label className="flex items-center gap-3 p-4 bg-green-50 border-2 border-green-200 rounded-2xl cursor-pointer hover:bg-green-100 transition-all">
+          <label className={`flex items-center gap-3 p-4 border-2 rounded-2xl cursor-pointer transition-all ${treatmentGivenToday ? 'bg-green-100 border-green-300' : 'bg-green-50 border-green-200 hover:bg-green-100'}`}>
             <input 
               type="checkbox" 
               checked={treatmentGivenToday}
@@ -998,8 +1002,12 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
               className="w-6 h-6 rounded-lg"
             />
             <div>
-              <div className="font-black text-sm text-green-900 uppercase">Treatments Given</div>
-              <div className="text-xs text-green-600">Check when all meds administered</div>
+              <div className="font-black text-sm text-green-900 uppercase">
+                {treatmentGivenToday ? '✓ Treatments Given Today' : 'Mark Treatments Given'}
+              </div>
+              <div className="text-xs text-green-600">
+                {treatmentGivenToday ? 'All medications administered' : 'Check when all meds administered'}
+              </div>
             </div>
             {treatmentGivenToday && <CheckCircle2 className="ml-auto text-green-600" size={24} />}
           </label>
