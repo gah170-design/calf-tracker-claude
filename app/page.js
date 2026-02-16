@@ -178,6 +178,9 @@ export default function CalfTracker() {
     const todayET = getETDateString(etNow);
     const calfKey = calf.bull_number || calf.number;
     
+    console.log('=== RECORDING FEEDING ===');
+    console.log('Calf:', calfKey, 'Period:', period, 'Today ET:', todayET);
+    
     const existing = feedings.find(f => {
       const feedingETDate = utcToETDateString(f.timestamp);
       const matchesCalf = calf.type === 'bull' 
@@ -185,8 +188,19 @@ export default function CalfTracker() {
         : f.calf_number === calf.number;
       const matchesDate = feedingETDate === todayET;
       const matchesPeriod = f.period === period;
+      
+      console.log('Checking feeding:', f.id, {
+        feedingETDate,
+        matchesCalf,
+        matchesDate,
+        matchesPeriod,
+        storedPeriod: f.period
+      });
+      
       return matchesCalf && matchesDate && matchesPeriod;
     });
+
+    console.log('Existing feeding found?', existing ? existing.id : 'NO');
 
     const feedingData = {
       consumption,
@@ -202,8 +216,10 @@ export default function CalfTracker() {
 
     try {
       if (existing) {
+        console.log('UPDATING existing feeding:', existing.id);
         await supabase.from('feedings').update(feedingData).eq('id', existing.id);
       } else {
+        console.log('INSERTING new feeding');
         await supabase.from('feedings').insert([feedingData]);
       }
       setNoteBuffer(prev => { const n = {...prev}; delete n[calfKey]; return n; });
@@ -231,11 +247,23 @@ export default function CalfTracker() {
   };
 
   const getCalfTreatmentPlans = (calf) => treatmentPlans.filter(tp => tp.calf_id === calf.id);
+
+  const getActiveCalfTreatmentPlans = (calf) => {
+    const plans = treatmentPlans.filter(tp => tp.calf_id === calf.id);
+    return plans.filter(plan => {
+      const planLogs = treatmentLogs.filter(tl => tl.treatment_plan_id === plan.id);
+      const meds = getTreatmentMedicinesForPlan(plan.id);
+      if (meds.length === 0) return true;
+      const maxTreatments = Math.max(...meds.map(m => m.total_treatments));
+      return planLogs.length < maxTreatments;
+    });
+  };
+
   const getTreatmentMedicinesForPlan = (planId) => treatmentMedicines.filter(tm => tm.treatment_plan_id === planId);
 
   const getTreatmentGivenToday = (calf) => {
     const todayET = getETDateString(getETDate());
-    const plans = getCalfTreatmentPlans(calf);
+    const plans = getActiveCalfTreatmentPlans(calf);
     for (let plan of plans) {
       const log = treatmentLogs.find(tl => {
         const logDate = utcToETDateString(tl.timestamp);
@@ -248,7 +276,7 @@ export default function CalfTracker() {
 
   const markTreatmentGiven = async (calf) => {
     const todayET = getETDateString(getETDate());
-    const plans = getCalfTreatmentPlans(calf);
+    const plans = getActiveCalfTreatmentPlans(calf);
     for (let plan of plans) {
       const existing = treatmentLogs.find(tl => {
         const logDate = utcToETDateString(tl.timestamp);
@@ -316,6 +344,7 @@ export default function CalfTracker() {
     }
     if (!medicines.find(m => m.name === addExistingMedicine.name)) {
       await supabase.from('medicines').insert([{ name: addExistingMedicine.name }]);
+      await loadAllData();
     }
     await supabase.from('treatment_medicines').insert([{
       treatment_plan_id: treatmentPlanId,
@@ -367,7 +396,13 @@ export default function CalfTracker() {
     const meds = getTreatmentMedicinesForPlan(planId);
     if (meds.length === 0) return 'Day 1';
     const maxTreatments = Math.max(...meds.map(m => m.total_treatments));
-    return `Day ${planLogs.length + 1} of ${maxTreatments}`;
+    const currentDay = planLogs.length;
+    
+    if (currentDay >= maxTreatments) {
+      return 'Complete';
+    }
+    
+    return `Day ${currentDay + 1} of ${maxTreatments}`;
   };
 
   const exportToCSV = () => {
@@ -527,7 +562,7 @@ export default function CalfTracker() {
                       onShowHistory={() => setSelectedCalfHistory(calf)}
                       noteValue={noteBuffer[calf.bull_number || calf.number]}
                       setNoteValue={(val) => setNoteBuffer(prev => ({...prev, [calf.bull_number || calf.number]: val}))}
-                      treatmentPlans={getCalfTreatmentPlans(calf)}
+                      treatmentPlans={getActiveCalfTreatmentPlans(calf)}
                       treatmentGivenToday={getTreatmentGivenToday(calf)}
                       onMarkTreatmentGiven={() => markTreatmentGiven(calf)}
                       onNewDiagnosis={() => { setSelectedCalfForTreatment(calf); setShowNewDiagnosis(true); }}
