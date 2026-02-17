@@ -100,12 +100,49 @@ export default function CalfTracker() {
     init();
   }, []);
 
+  const autoArchiveWeanedCalves = async (calvesList) => {
+    const weanedCalves = calvesList.filter(c => {
+      if (c.status !== 'active' || c.type === 'bull') return false;
+      const age = getCalfAgeDays(c.birth_date);
+      return age >= 53;
+    });
+    
+    if (weanedCalves.length > 0) {
+      console.log(`Auto-archiving ${weanedCalves.length} weaned calves older than 7 days`);
+      for (let calf of weanedCalves) {
+        await supabase.from('calves').update({ status: 'inactive' }).eq('id', calf.id);
+      }
+    }
+  };
+
   const loadAllData = async () => {
     try {
       const { data: c } = await supabase.from('calves').select('*').order('created_at', { ascending: false });
-      if (c) setCalves(c);
-      const { data: f } = await supabase.from('feedings').select('*').order('timestamp', { ascending: false });
-      if (f) setFeedings(f);
+      
+      if (c) {
+        await autoArchiveWeanedCalves(c);
+        const activeCalves = c.filter(calf => calf.status === 'active');
+        setCalves(activeCalves);
+        
+        const activeCalfNumbers = activeCalves.filter(calf => calf.type !== 'bull').map(calf => calf.number);
+        const activeBullNumbers = activeCalves.filter(calf => calf.type === 'bull').map(calf => calf.bull_number);
+        
+        if (activeCalfNumbers.length > 0 || activeBullNumbers.length > 0) {
+          const orConditions = [];
+          if (activeCalfNumbers.length > 0) orConditions.push(`calf_number.in.(${activeCalfNumbers.join(',')})`);
+          if (activeBullNumbers.length > 0) orConditions.push(`bull_number.in.(${activeBullNumbers.join(',')})`);
+          
+          const { data: f } = await supabase
+            .from('feedings')
+            .select('*')
+            .or(orConditions.join(','))
+            .order('timestamp', { ascending: false });
+          if (f) setFeedings(f);
+        } else {
+          setFeedings([]);
+        }
+      }
+      
       const { data: u } = await supabase.from('users').select('*').order('name', { ascending: true });
       if (u) setUsers(u);
       const { data: p } = await supabase.from('protocols').select('*').order('order', { ascending: true });
@@ -185,7 +222,7 @@ export default function CalfTracker() {
       const feedingETDate = utcToETDateString(f.timestamp);
       const matchesCalf = calf.type === 'bull' 
         ? f.bull_number === calf.bull_number 
-        : f.calf_number === calf.number;
+        : f.calf_number == calf.number;
       const matchesDate = feedingETDate === todayET;
       const matchesPeriod = f.period === period;
       
@@ -230,7 +267,7 @@ export default function CalfTracker() {
   };
 
   const getCalfFeedings = (calf) => feedings.filter(f => 
-    calf.type === 'bull' ? f.bull_number === calf.bull_number : f.calf_number === calf.number
+    calf.type === 'bull' ? f.bull_number === calf.bull_number : f.calf_number == calf.number
   ).sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
 
   const getProtocolStatus = (calf) => {
@@ -482,25 +519,7 @@ export default function CalfTracker() {
             </div>
             <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full active:scale-90 transition-transform"><Settings size={20}/></button>
           </header>
-<header className="bg-blue-700 text-white p-6 sticky top-0 z-40 shadow-lg flex justify-between items-center">
-            <div>
-              <h1 className="font-black text-2xl italic tracking-tighter uppercase">Calf Tracker</h1>
-              <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">{currentUser.name} • {getETPeriod()} Shift</p>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => {
-                const calf = calves.find(c => c.number === 3232);
-                const calfFeedings = feedings.filter(f => f.calf_number === 3232);
-                console.log('=== DEBUG CALF 3232 ===');
-                console.log('Calf object:', calf);
-                console.log('Total feedings in state:', feedings.length);
-                console.log('Feedings for 3232:', calfFeedings.length);
-                console.log('Feeding details:', calfFeedings);
-                alert(`Calf 3232 has ${calfFeedings.length} feedings loaded`);
-              }} className="p-2 bg-white/20 rounded-full text-xs">DEBUG</button>
-              <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full active:scale-90 transition-transform"><Settings size={20}/></button>
-            </div>
-          </header>
+
           <main className="p-4 max-w-2xl mx-auto space-y-4">
             {currentPage === 'dashboard' ? (
               <div className="space-y-4">
@@ -580,7 +599,7 @@ export default function CalfTracker() {
                       onShowHistory={() => setSelectedCalfHistory(calf)}
                       noteValue={noteBuffer[calf.bull_number || calf.number]}
                       setNoteValue={(val) => setNoteBuffer(prev => ({...prev, [calf.bull_number || calf.number]: val}))}
-                      treatmentPlans={getActiveCalfTreatmentPlans(calf)}
+                      treatmentPlans={getCalfTreatmentPlans(calf)}
                       treatmentGivenToday={getTreatmentGivenToday(calf)}
                       onMarkTreatmentGiven={() => markTreatmentGiven(calf)}
                       onNewDiagnosis={() => { setSelectedCalfForTreatment(calf); setShowNewDiagnosis(true); }}
@@ -1023,22 +1042,18 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
       </div>
 
       {treatmentPlans.length > 0 && (
-        <div onClick={onViewTreatment} className={`mb-4 p-4 border-2 rounded-2xl cursor-pointer transition-all ${treatmentGivenToday ? 'bg-green-50 border-green-200 hover:bg-green-100' : 'bg-red-50 border-red-200 hover:bg-red-100'}`}>
+        <div onClick={onViewTreatment} className="mb-4 p-4 bg-red-50 border-2 border-red-200 rounded-2xl cursor-pointer hover:bg-red-100 transition-all">
           <div className="flex items-center gap-3 mb-2">
-            <div className={`text-white p-2 rounded-xl ${treatmentGivenToday ? 'bg-green-500' : 'bg-red-500'}`}>
-              {treatmentGivenToday ? <CheckCircle2 size={20} /> : <Activity size={20} />}
+            <div className="bg-red-500 text-white p-2 rounded-xl">
+              <Activity size={20} />
             </div>
             <div className="flex-1">
-              <div className={`font-black text-sm uppercase ${treatmentGivenToday ? 'text-green-900' : 'text-red-900'}`}>
-                {treatmentGivenToday ? '✓ Treated Today' : 'Active Treatment'}
-              </div>
-              <div className={`text-xs ${treatmentGivenToday ? 'text-green-600' : 'text-red-600'}`}>
-                Tap to view details
-              </div>
+              <div className="font-black text-sm text-red-900 uppercase">Active Treatment</div>
+              <div className="text-xs text-red-600">Tap to view details</div>
             </div>
           </div>
           {treatmentPlans.map(tp => (
-            <div key={tp.id} className={`text-xs font-bold ml-11 ${treatmentGivenToday ? 'text-green-800' : 'text-red-800'}`}>
+            <div key={tp.id} className="text-xs font-bold text-red-800 ml-11">
               {tp.diagnosis} - {calculateProgress(tp.id)}
             </div>
           ))}
@@ -1047,7 +1062,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
 
       {treatmentPlans.length > 0 && (
         <div className="mb-6">
-          <label className={`flex items-center gap-3 p-4 border-2 rounded-2xl cursor-pointer transition-all ${treatmentGivenToday ? 'bg-green-100 border-green-300' : 'bg-green-50 border-green-200 hover:bg-green-100'}`}>
+          <label className="flex items-center gap-3 p-4 bg-green-50 border-2 border-green-200 rounded-2xl cursor-pointer hover:bg-green-100 transition-all">
             <input 
               type="checkbox" 
               checked={treatmentGivenToday}
@@ -1055,12 +1070,8 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
               className="w-6 h-6 rounded-lg"
             />
             <div>
-              <div className="font-black text-sm text-green-900 uppercase">
-                {treatmentGivenToday ? '✓ Treatments Given Today' : 'Mark Treatments Given'}
-              </div>
-              <div className="text-xs text-green-600">
-                {treatmentGivenToday ? 'All medications administered' : 'Check when all meds administered'}
-              </div>
+              <div className="font-black text-sm text-green-900 uppercase">Treatments Given</div>
+              <div className="text-xs text-green-600">Check when all meds administered</div>
             </div>
             {treatmentGivenToday && <CheckCircle2 className="ml-auto text-green-600" size={24} />}
           </label>
@@ -1115,4 +1126,3 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
     </div>
   );
 }
-
