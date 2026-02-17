@@ -482,7 +482,25 @@ export default function CalfTracker() {
             </div>
             <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full active:scale-90 transition-transform"><Settings size={20}/></button>
           </header>
-
+<header className="bg-blue-700 text-white p-6 sticky top-0 z-40 shadow-lg flex justify-between items-center">
+            <div>
+              <h1 className="font-black text-2xl italic tracking-tighter uppercase">Calf Tracker</h1>
+              <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">{currentUser.name} • {getETPeriod()} Shift</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => {
+                const calf = calves.find(c => c.number === 3232);
+                const calfFeedings = feedings.filter(f => f.calf_number === 3232);
+                console.log('=== DEBUG CALF 3232 ===');
+                console.log('Calf object:', calf);
+                console.log('Total feedings in state:', feedings.length);
+                console.log('Feedings for 3232:', calfFeedings.length);
+                console.log('Feeding details:', calfFeedings);
+                alert(`Calf 3232 has ${calfFeedings.length} feedings loaded`);
+              }} className="p-2 bg-white/20 rounded-full text-xs">DEBUG</button>
+              <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full active:scale-90 transition-transform"><Settings size={20}/></button>
+            </div>
+          </header>
           <main className="p-4 max-w-2xl mx-auto space-y-4">
             {currentPage === 'dashboard' ? (
               <div className="space-y-4">
@@ -1097,3 +1115,4 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSta
     </div>
   );
 }
+
