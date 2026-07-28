@@ -203,11 +203,16 @@ export default function CalfTracker() {
     }
   };
 
+  const [savingFeeding, setSavingFeeding] = useState({});
+
   const recordFeeding = async (calf, consumption) => {
+    const calfKey = calf.bull_number || calf.number;
+    if (savingFeeding[calfKey]) return; // guard against double-taps while a save is in flight
+    setSavingFeeding(prev => ({ ...prev, [calfKey]: true }));
+
     const etNow = getETDate();
     const period = getETPeriod();
     const todayET = getETDateString(etNow);
-    const calfKey = calf.bull_number || calf.number;
 
     const existing = feedings.find(f => {
       const feedingETDate = utcToETDateString(f.timestamp);
@@ -242,6 +247,8 @@ export default function CalfTracker() {
       await loadAllData();
     } catch (err) {
       console.error('recordFeeding error:', err);
+    } finally {
+      setSavingFeeding(prev => { const n = { ...prev }; delete n[calfKey]; return n; });
     }
   };
 
@@ -265,6 +272,18 @@ export default function CalfTracker() {
       await loadAllData();
     }
     // If no feeding yet, note stays in buffer and saves when % is clicked
+  };
+
+  // ── ADMIN: edit an existing feeding record directly ──
+  const adminUpdateFeeding = async (feedingId, updates) => {
+    await supabase.from('feedings').update(updates).eq('id', feedingId);
+    await loadAllData();
+  };
+
+  // ── ADMIN: delete a feeding record (e.g. accidental duplicate) ──
+  const adminDeleteFeeding = async (feedingId) => {
+    await supabase.from('feedings').delete().eq('id', feedingId);
+    await loadAllData();
   };
 
   const getCalfFeedings = (calf) => feedings.filter(f =>
@@ -601,6 +620,7 @@ export default function CalfTracker() {
                     currentPeriod={getETPeriod()}
                     onRecord={(pct) => recordFeeding(calf, pct)}
                     onSaveNote={(note) => saveNote(calf, note)}
+                    saving={!!savingFeeding[calf.bull_number || calf.number]}
                     onStatus={(id, s) => {
                       if (confirm(`Mark as ${s}?`)) {
                         if (calf.type === 'bull') {
@@ -677,85 +697,17 @@ export default function CalfTracker() {
 
       {/* ── HISTORY MODAL with prev/next nav ── */}
       {selectedCalfHistory && (
-        <div className="fixed inset-0 bg-white z-[100] flex flex-col">
-          <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
-            <div>
-              {/* FIX: show number + name */}
-              <h2 className="text-3xl font-black italic text-slate-900 uppercase">#{selectedCalfHistory.bull_number || selectedCalfHistory.number}</h2>
-              {selectedCalfHistory.name && (
-                <p className="text-sm font-black text-slate-500 uppercase tracking-widest">{selectedCalfHistory.name}</p>
-              )}
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Timeline (Past 14 Shifts)</p>
-            </div>
-            <button onClick={() => setSelectedCalfHistory(null)} className="p-3 bg-slate-100 rounded-full"><X size={24} /></button>
-          </div>
-
-          {/* FIX: prev/next navigation */}
-          <div className="flex items-center justify-between px-6 py-3 border-b bg-white">
-            <button
-              onClick={() => navigateHistory(-1)}
-              disabled={historyNavIndex <= 0}
-              className="flex items-center gap-1 px-4 py-2 bg-slate-100 rounded-full font-black text-xs uppercase text-slate-600 disabled:opacity-30 disabled:cursor-not-allowed active:bg-slate-200"
-            >
-              <ChevronLeft size={16} /> Prev
-            </button>
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-              {historyNavIndex + 1} of {historyNavList.length}
-            </span>
-            <button
-              onClick={() => navigateHistory(1)}
-              disabled={historyNavIndex >= historyNavList.length - 1}
-              className="flex items-center gap-1 px-4 py-2 bg-slate-100 rounded-full font-black text-xs uppercase text-slate-600 disabled:opacity-30 disabled:cursor-not-allowed active:bg-slate-200"
-            >
-              Next <ChevronRight size={16} />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-50">
-            <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
-              <div className="flex items-center gap-2 mb-6 text-blue-600">
-                <BarChart3 size={18} />
-                <span className="text-xs font-black uppercase tracking-widest">Growth Curve</span>
-              </div>
-              <div className="relative h-40 bg-slate-50 rounded-xl p-4">
-                <div className="flex items-end justify-between h-full gap-1">
-                  {(() => {
-                    const allFeedings = getCalfFeedings(selectedCalfHistory);
-                    const latest14 = allFeedings.slice(0, 14).reverse();
-                    if (latest14.length === 0) {
-                      return <div className="w-full h-full flex items-center justify-center text-[10px] font-black text-slate-300 uppercase italic">No Data Yet</div>;
-                    }
-                    return latest14.map((f, i) => {
-                      const heightPercent = Math.max(f.consumption, 5);
-                      return (
-                        <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
-                          <div
-                            className={`w-full rounded-t transition-all ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                            style={{ height: `${heightPercent}%` }}
-                          />
-                          <div className="text-[7px] font-black text-slate-400 mt-1 uppercase">{f.period}</div>
-                        </div>
-                      );
-                    });
-                  })()}
-                </div>
-              </div>
-            </div>
-            <div className="space-y-3 pb-10">
-              {getCalfFeedings(selectedCalfHistory).map((f, i) => (
-                <div key={i} className="p-5 bg-white rounded-3xl border border-slate-100 shadow-sm">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
-                    <span className="text-[10px] font-black text-slate-400 uppercase">{f.user_name}</span>
-                  </div>
-                  {/* FIX: notes now reliably display */}
-                  {f.notes && <p className="text-sm italic text-slate-600 bg-slate-50 p-3 rounded-xl mb-2">"{f.notes}"</p>}
-                  <p className="text-[10px] font-black text-slate-400 uppercase">{new Date(f.timestamp).toLocaleDateString()} • {f.period}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <HistoryModal
+          calf={selectedCalfHistory}
+          onClose={() => setSelectedCalfHistory(null)}
+          history={getCalfFeedings(selectedCalfHistory)}
+          historyNavIndex={historyNavIndex}
+          historyNavList={historyNavList}
+          navigateHistory={navigateHistory}
+          isAdmin={currentUser.role === 'admin'}
+          onUpdateFeeding={adminUpdateFeeding}
+          onDeleteFeeding={adminDeleteFeeding}
+        />
       )}
 
       {/* ── ADD CALF MODAL ── */}
@@ -930,8 +882,163 @@ export default function CalfTracker() {
   );
 }
 
+// ── HISTORY MODAL COMPONENT (with admin edit/delete) ──
+function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList, navigateHistory, isAdmin, onUpdateFeeding, onDeleteFeeding }) {
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData] = useState({ consumption: 0, period: 'AM', notes: '' });
+
+  const startEdit = (f) => {
+    setEditingId(f.id);
+    setEditData({ consumption: f.consumption, period: f.period, notes: f.notes || '' });
+  };
+
+  const saveEdit = async (f) => {
+    await onUpdateFeeding(f.id, {
+      consumption: parseInt(editData.consumption),
+      period: editData.period,
+      notes: editData.notes || null
+    });
+    setEditingId(null);
+  };
+
+  const removeFeeding = async (f) => {
+    if (confirm(`Delete this ${f.period} feeding (${f.consumption}%) from ${new Date(f.timestamp).toLocaleDateString()}? This cannot be undone.`)) {
+      await onDeleteFeeding(f.id);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-white z-[100] flex flex-col">
+      <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
+        <div>
+          <h2 className="text-3xl font-black italic text-slate-900 uppercase">#{calf.bull_number || calf.number}</h2>
+          {calf.name && (
+            <p className="text-sm font-black text-slate-500 uppercase tracking-widest">{calf.name}</p>
+          )}
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Timeline (Past 14 Shifts)</p>
+        </div>
+        <button onClick={onClose} className="p-3 bg-slate-100 rounded-full"><X size={24} /></button>
+      </div>
+
+      <div className="flex items-center justify-between px-6 py-3 border-b bg-white">
+        <button
+          onClick={() => navigateHistory(-1)}
+          disabled={historyNavIndex <= 0}
+          className="flex items-center gap-1 px-4 py-2 bg-slate-100 rounded-full font-black text-xs uppercase text-slate-600 disabled:opacity-30 disabled:cursor-not-allowed active:bg-slate-200"
+        >
+          <ChevronLeft size={16} /> Prev
+        </button>
+        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+          {historyNavIndex + 1} of {historyNavList.length}
+        </span>
+        <button
+          onClick={() => navigateHistory(1)}
+          disabled={historyNavIndex >= historyNavList.length - 1}
+          className="flex items-center gap-1 px-4 py-2 bg-slate-100 rounded-full font-black text-xs uppercase text-slate-600 disabled:opacity-30 disabled:cursor-not-allowed active:bg-slate-200"
+        >
+          Next <ChevronRight size={16} />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-50">
+        <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+          <div className="flex items-center gap-2 mb-6 text-blue-600">
+            <BarChart3 size={18} />
+            <span className="text-xs font-black uppercase tracking-widest">Growth Curve</span>
+          </div>
+          <div className="relative h-40 bg-slate-50 rounded-xl p-4">
+            <div className="flex items-end justify-between h-full gap-1">
+              {(() => {
+                const latest14 = [...history].slice(0, 14).reverse();
+                if (latest14.length === 0) {
+                  return <div className="w-full h-full flex items-center justify-center text-[10px] font-black text-slate-300 uppercase italic">No Data Yet</div>;
+                }
+                return latest14.map((f, i) => {
+                  const heightPercent = Math.max(f.consumption, 5);
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
+                      <div
+                        className={`w-full rounded-t transition-all ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                        style={{ height: `${heightPercent}%` }}
+                      />
+                      <div className="text-[7px] font-black text-slate-400 mt-1 uppercase">{f.period}</div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+        </div>
+        <div className="space-y-3 pb-10">
+          {history.map((f, i) => (
+            <div key={i} className="p-5 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              {editingId === f.id ? (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase">Consumption %</label>
+                      <select
+                        value={editData.consumption}
+                        onChange={(e) => setEditData({ ...editData, consumption: e.target.value })}
+                        className="w-full p-3 bg-slate-50 rounded-xl font-black text-sm border-0"
+                      >
+                        {[0, 25, 50, 75, 100].map(pct => <option key={pct} value={pct}>{pct}%</option>)}
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[9px] font-black text-slate-400 uppercase">Period</label>
+                      <select
+                        value={editData.period}
+                        onChange={(e) => setEditData({ ...editData, period: e.target.value })}
+                        className="w-full p-3 bg-slate-50 rounded-xl font-black text-sm border-0"
+                      >
+                        <option value="AM">AM</option>
+                        <option value="PM">PM</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase">Notes</label>
+                    <input
+                      type="text"
+                      value={editData.notes}
+                      onChange={(e) => setEditData({ ...editData, notes: e.target.value })}
+                      className="w-full p-3 bg-slate-50 rounded-xl font-bold text-sm border-0"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => saveEdit(f)} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-black text-xs uppercase">Save</button>
+                    <button onClick={() => setEditingId(null)} className="flex-1 bg-slate-100 text-slate-500 py-3 rounded-xl font-black text-xs uppercase">Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
+                    <span className="text-[10px] font-black text-slate-400 uppercase">{f.user_name}</span>
+                  </div>
+                  {f.notes && <p className="text-sm italic text-slate-600 bg-slate-50 p-3 rounded-xl mb-2">"{f.notes}"</p>}
+                  <div className="flex justify-between items-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase">{new Date(f.timestamp).toLocaleDateString()} • {f.period}</p>
+                    {isAdmin && (
+                      <div className="flex gap-2">
+                        <button onClick={() => startEdit(f)} className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg font-black text-[10px] uppercase">Edit</button>
+                        <button onClick={() => removeFeeding(f)} className="px-3 py-1.5 bg-red-50 text-red-500 rounded-lg font-black text-[10px] uppercase">Delete</button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── CALF CARD COMPONENT ──
-function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSaveNote, onStatus, onShowHistory, noteValue, setNoteValue, treatmentPlans, treatmentGivenToday, onMarkTreatmentGiven, onNewDiagnosis, onViewTreatment, calculateProgress }) {
+function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSaveNote, onStatus, onShowHistory, noteValue, setNoteValue, treatmentPlans, treatmentGivenToday, onMarkTreatmentGiven, onNewDiagnosis, onViewTreatment, calculateProgress, saving }) {
   const latest = [...history].slice(0, 3).reverse();
   const todayET = getETDateString(getETDate());
   const todayFeeding = history.find(f => {
@@ -1034,7 +1141,8 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSav
             <button
               key={pct}
               onClick={() => onRecord(pct)}
-              className={`py-5 rounded-2xl font-black text-sm transition-all shadow-sm ${todayFeeding?.consumption === pct ? 'bg-blue-600 text-white ring-4 ring-blue-100 scale-95' : 'bg-slate-50 text-slate-300 active:bg-slate-100'}`}
+              disabled={saving}
+              className={`py-5 rounded-2xl font-black text-sm transition-all shadow-sm disabled:opacity-40 ${todayFeeding?.consumption === pct ? 'bg-blue-600 text-white ring-4 ring-blue-100 scale-95' : 'bg-slate-50 text-slate-300 active:bg-slate-100'}`}
             >
               {pct}%
             </button>
