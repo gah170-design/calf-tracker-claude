@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Plus, Settings, X, ChevronLeft, ChevronRight, Activity, ShoppingCart, Ghost, CheckCircle2, Trash2, ListChecks, Hash, BarChart3, Download } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Settings, X, ChevronLeft, ChevronRight, Activity, ShoppingCart, Ghost, CheckCircle2, Trash2, ListChecks, Hash, BarChart3, Download, Beef, TrendingUp, AlertTriangle, Users } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -60,19 +60,25 @@ export default function CalfTracker() {
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddCalf, setShowAddCalf] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const [selectedCalfHistory, setSelectedCalfHistory] = useState(null);
   const [historyNavList, setHistoryNavList] = useState([]);
   const [showPinEntry, setShowPinEntry] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [pinInput, setPinInput] = useState('');
   const [filterProtocol, setFilterProtocol] = useState('all');
+  const [showNamedOnly, setShowNamedOnly] = useState(false);
   const [settings, setSettings] = useState({ nextCalfNumber: 1000, nextBullNumber: 1 });
   const [newCalf, setNewCalf] = useState({
     name: '',
     birthDate: new Date(getETDate().getTime() - getETDate().getTimezoneOffset() * 60000).toISOString().slice(0, 16),
-    isBull: false
+    isBull: false,
+    useCustomNumber: false,
+    customNumber: ''
   });
+  const [numberCheck, setNumberCheck] = useState({ status: null });
   const [noteBuffer, setNoteBuffer] = useState({});
+  const [feedingRecordIds, setFeedingRecordIds] = useState({});
   const [showNewDiagnosis, setShowNewDiagnosis] = useState(false);
   const [showTreatmentPlan, setShowTreatmentPlan] = useState(false);
   const [selectedCalfForTreatment, setSelectedCalfForTreatment] = useState(null);
@@ -82,6 +88,7 @@ export default function CalfTracker() {
   const [newMedicine, setNewMedicine] = useState({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
   const [editingTreatmentId, setEditingTreatmentId] = useState(null);
   const [addExistingMedicine, setAddExistingMedicine] = useState({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
+  const pendingInsertRef = useRef({});
 
   useEffect(() => {
     const init = async () => {
@@ -101,25 +108,25 @@ export default function CalfTracker() {
     init();
   }, []);
 
+  // PERF FIX (#5): batched update instead of one-by-one loop; returns archived ids
   const autoArchiveWeanedCalves = async (calvesList) => {
-    const weanedCalves = calvesList.filter(c => {
-      if (c.status !== 'active' || c.type === 'bull') return false;
-      const age = getCalfAgeDays(c.birth_date);
-      return age >= 53;
-    });
-    if (weanedCalves.length > 0) {
-      for (let calf of weanedCalves) {
-        await supabase.from('calves').update({ status: 'inactive' }).eq('id', calf.id);
-      }
+    const weanedIds = calvesList
+      .filter(c => c.type !== 'bull' && getCalfAgeDays(c.birth_date) >= 53)
+      .map(c => c.id);
+    if (weanedIds.length > 0) {
+      await supabase.from('calves').update({ status: 'inactive' }).in('id', weanedIds);
     }
+    return weanedIds;
   };
 
   const loadAllData = async () => {
     try {
-      const { data: c } = await supabase.from('calves').select('*').order('created_at', { ascending: false });
+      // PERF FIX (#2): filter status='active' in the query itself instead of fetching
+      // every calf ever created (5+ years of history) and filtering client-side.
+      const { data: c } = await supabase.from('calves').select('*').eq('status', 'active').order('created_at', { ascending: false });
       if (c) {
-        await autoArchiveWeanedCalves(c);
-        const activeCalves = c.filter(calf => calf.status === 'active');
+        const weanedIds = await autoArchiveWeanedCalves(c);
+        const activeCalves = c.filter(calf => !weanedIds.includes(calf.id));
         setCalves(activeCalves);
         const activeCalfNumbers = activeCalves.filter(calf => calf.type !== 'bull').map(calf => calf.number);
         const activeBullNumbers = activeCalves.filter(calf => calf.type === 'bull').map(calf => calf.bull_number);
@@ -132,9 +139,21 @@ export default function CalfTracker() {
             .select('*')
             .or(orConditions.join(','))
             .order('timestamp', { ascending: false });
-          if (f) setFeedings(f);
+          if (f) {
+            setFeedings(f);
+            // Seed the record-id cache so hot-path saves (recordFeeding/saveNote)
+            // can update directly by id instead of re-deriving from the array or reloading.
+            const idMap = {};
+            f.forEach(rec => {
+              const key = rec.bull_number || rec.calf_number;
+              const dateStr = utcToETDateString(rec.timestamp);
+              idMap[`${key}_${dateStr}_${rec.period}`] = rec.id;
+            });
+            setFeedingRecordIds(idMap);
+          }
         } else {
           setFeedings([]);
+          setFeedingRecordIds({});
         }
       }
       const { data: u } = await supabase.from('users').select('*').order('name', { ascending: true });
@@ -167,6 +186,15 @@ export default function CalfTracker() {
     await supabase.from('settings').update({ setting_value: val.toString() }).eq('setting_key', dbKey);
   };
 
+  // Custom-number modal support: checks uniqueness across ALL calves (any status),
+  // since the `number` column is unique for the life of the table, not just active rows.
+  const checkCustomNumberAvailability = async (num) => {
+    if (!num) { setNumberCheck({ status: null }); return; }
+    setNumberCheck({ status: 'checking' });
+    const { data } = await supabase.from('calves').select('id').eq('number', parseInt(num)).limit(1);
+    setNumberCheck({ status: data && data.length > 0 ? 'taken' : 'available' });
+  };
+
   const addCalf = async () => {
     let bullNumber = null;
     let dbNumberValue;
@@ -175,9 +203,12 @@ export default function CalfTracker() {
       dbNumberValue = -settings.nextBullNumber;
     } else {
       const autoNum = settings.nextCalfNumber;
-      if (newCalf.name.trim() !== "") {
-        const custom = prompt(`Enter number for ${newCalf.name}:`, autoNum);
-        dbNumberValue = custom && !isNaN(custom) ? parseInt(custom) : autoNum;
+      if (newCalf.useCustomNumber && newCalf.customNumber) {
+        if (numberCheck.status === 'taken') {
+          alert('That number is already in use. Choose a different one.');
+          return;
+        }
+        dbNumberValue = parseInt(newCalf.customNumber);
       } else {
         dbNumberValue = autoNum;
       }
@@ -197,38 +228,34 @@ export default function CalfTracker() {
       setNewCalf({
         name: '',
         birthDate: new Date(getETDate().getTime() - getETDate().getTimezoneOffset() * 60000).toISOString().slice(0, 16),
-        isBull: false
+        isBull: false,
+        useCustomNumber: false,
+        customNumber: ''
       });
+      setNumberCheck({ status: null });
       await loadAllData();
     }
   };
 
-  const [savingFeeding, setSavingFeeding] = useState({});
-
+  // PERF FIX (#1) + button-disable fix: no more freezing the button while a full
+  // 8-query reload runs. Instead we cache the feeding row's id locally the first time
+  // it's created, then subsequent taps for that calf/period update that row directly
+  // and patch local state -- no reload, no disabled state, and a calf that drinks more
+  // later can still be corrected instantly without navigating to Edit.
   const recordFeeding = async (calf, consumption) => {
     const calfKey = calf.bull_number || calf.number;
-    if (savingFeeding[calfKey]) return; // guard against double-taps while a save is in flight
-    setSavingFeeding(prev => ({ ...prev, [calfKey]: true }));
-
-    const etNow = getETDate();
     const period = getETPeriod();
-    const todayET = getETDateString(etNow);
+    const todayET = getETDateString(getETDate());
+    const cacheKey = `${calfKey}_${todayET}_${period}`;
+    const cachedId = feedingRecordIds[cacheKey];
 
-    const existing = feedings.find(f => {
-      const feedingETDate = utcToETDateString(f.timestamp);
-      const matchesCalf = calf.type === 'bull'
-        ? f.bull_number === calf.bull_number
-        : f.calf_number == calf.number;
-      const matchesDate = feedingETDate === todayET;
-      const matchesPeriod = f.period === period;
-      return matchesCalf && matchesDate && matchesPeriod;
-    });
+    const existingRecord = cachedId ? feedings.find(f => f.id === cachedId) : null;
+    const notes = noteBuffer[calfKey] !== undefined ? noteBuffer[calfKey] : (existingRecord ? existingRecord.notes : null);
 
     const feedingData = {
       consumption,
       timestamp: new Date().toISOString(),
-      // FIX: use noteBuffer if present, otherwise preserve existing note
-      notes: noteBuffer[calfKey] !== undefined ? noteBuffer[calfKey] : (existing ? existing.notes : null),
+      notes,
       treatment: false,
       user_name: currentUser.name,
       calf_number: calf.type !== 'bull' ? calf.number : null,
@@ -238,38 +265,40 @@ export default function CalfTracker() {
     };
 
     try {
-      if (existing) {
-        await supabase.from('feedings').update(feedingData).eq('id', existing.id);
+      if (cachedId) {
+        await supabase.from('feedings').update(feedingData).eq('id', cachedId);
+        setFeedings(prev => prev.map(f => f.id === cachedId ? { ...f, ...feedingData } : f));
       } else {
-        await supabase.from('feedings').insert([feedingData]);
+        // Guard only the brief window of the very first insert for this calf/period,
+        // to prevent a genuine double-tap race from creating two rows.
+        if (pendingInsertRef.current[cacheKey]) return;
+        pendingInsertRef.current[cacheKey] = true;
+        const { data, error } = await supabase.from('feedings').insert([feedingData]).select();
+        pendingInsertRef.current[cacheKey] = false;
+        if (!error && data && data[0]) {
+          setFeedingRecordIds(prev => ({ ...prev, [cacheKey]: data[0].id }));
+          setFeedings(prev => [data[0], ...prev]);
+        }
       }
       setNoteBuffer(prev => { const n = { ...prev }; delete n[calfKey]; return n; });
-      await loadAllData();
     } catch (err) {
       console.error('recordFeeding error:', err);
-    } finally {
-      setSavingFeeding(prev => { const n = { ...prev }; delete n[calfKey]; return n; });
     }
   };
 
-  // FIX: dedicated note save — updates existing feeding record or holds in buffer until % is clicked
+  // Dedicated note save -- updates existing feeding record directly by cached id,
+  // or holds in buffer until a % is clicked if no feeding exists yet today.
   const saveNote = async (calf, noteText) => {
     const calfKey = calf.bull_number || calf.number;
     const period = getETPeriod();
     const todayET = getETDateString(getETDate());
+    const cacheKey = `${calfKey}_${todayET}_${period}`;
+    const cachedId = feedingRecordIds[cacheKey];
 
-    const existing = feedings.find(f => {
-      const feedingETDate = utcToETDateString(f.timestamp);
-      const matchesCalf = calf.type === 'bull'
-        ? f.bull_number === calf.bull_number
-        : f.calf_number == calf.number;
-      return matchesCalf && feedingETDate === todayET && f.period === period;
-    });
-
-    if (existing) {
-      await supabase.from('feedings').update({ notes: noteText }).eq('id', existing.id);
+    if (cachedId) {
+      await supabase.from('feedings').update({ notes: noteText }).eq('id', cachedId);
+      setFeedings(prev => prev.map(f => f.id === cachedId ? { ...f, notes: noteText } : f));
       setNoteBuffer(prev => { const n = { ...prev }; delete n[calfKey]; return n; });
-      await loadAllData();
     }
     // If no feeding yet, note stays in buffer and saves when % is clicked
   };
@@ -350,15 +379,54 @@ export default function CalfTracker() {
     await loadAllData();
   };
 
+  // Medicine template system: saving a brand-new medicine now stores its default
+  // dosage/interval/treatment-count on the `medicines` row itself, so picking it
+  // again later autofills those fields. Single-dose vs multi-dose variants of the
+  // same drug are just saved as separate named entries (e.g. "Banamine (Single Dose)").
   const addMedicineToNewDiagnosis = async () => {
     if (!newMedicine.name || !newMedicine.dosage) { alert('Fill in medicine name and dosage'); return; }
-    if (!medicines.find(m => m.name === newMedicine.name)) {
-      await supabase.from('medicines').insert([{ name: newMedicine.name }]);
+    const existingMed = medicines.find(m => m.name === newMedicine.name);
+    if (!existingMed) {
+      await supabase.from('medicines').insert([{
+        name: newMedicine.name,
+        default_dosage: newMedicine.dosage,
+        default_frequency_hours: newMedicine.hours,
+        default_total_treatments: newMedicine.totalTreatments
+      }]);
       await loadAllData();
     }
     setNewTreatmentMedicines([...newTreatmentMedicines, { ...newMedicine, id: Date.now() }]);
     setNewMedicine({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
     setShowMedicineForm(false);
+  };
+
+  // Autofill dosage/interval/treatments when an existing medicine is picked from the dropdown.
+  const handleMedicineNameSelect = (name) => {
+    const med = medicines.find(m => m.name === name);
+    if (med) {
+      setNewMedicine({
+        name: med.name,
+        dosage: med.default_dosage || '',
+        hours: med.default_frequency_hours || 24,
+        totalTreatments: med.default_total_treatments || 5
+      });
+    } else {
+      setNewMedicine({ ...newMedicine, name });
+    }
+  };
+
+  const handleExistingMedicineNameSelect = (name) => {
+    const med = medicines.find(m => m.name === name);
+    if (med) {
+      setAddExistingMedicine({
+        name: med.name,
+        dosage: med.default_dosage || '',
+        hours: med.default_frequency_hours || 24,
+        totalTreatments: med.default_total_treatments || 5
+      });
+    } else {
+      setAddExistingMedicine({ ...addExistingMedicine, name });
+    }
   };
 
   const saveDiagnosis = async () => {
@@ -390,9 +458,14 @@ export default function CalfTracker() {
 
   const addMedicineToExisting = async (treatmentPlanId) => {
     if (!addExistingMedicine.name || !addExistingMedicine.dosage) { alert('Fill in all medicine fields'); return; }
-    if (!medicines.find(m => m.name === addExistingMedicine.name)) {
-      await supabase.from('medicines').insert([{ name: addExistingMedicine.name }]);
-      await loadAllData();
+    const existingMed = medicines.find(m => m.name === addExistingMedicine.name);
+    if (!existingMed) {
+      await supabase.from('medicines').insert([{
+        name: addExistingMedicine.name,
+        default_dosage: addExistingMedicine.dosage,
+        default_frequency_hours: addExistingMedicine.hours,
+        default_total_treatments: addExistingMedicine.totalTreatments
+      }]);
     }
     await supabase.from('treatment_medicines').insert([{
       treatment_plan_id: treatmentPlanId,
@@ -446,18 +519,24 @@ export default function CalfTracker() {
     return `Day ${currentDay + 1} of ${maxTreatments}`;
   };
 
+  // CSV export now includes active/past diagnoses and their medicines as extra
+  // trailing columns, additive to the original layout so existing spreadsheet
+  // workflows built on the old column order aren't disrupted.
   const exportToCSV = () => {
     const csvData = [];
-    csvData.push(['Calf Number', 'Name', 'Type', 'Birth Date', 'Age (Days)', 'Protocol', 'Status', 'Date', 'Period', 'Consumption', 'Notes', 'User']);
+    csvData.push(['Calf Number', 'Name', 'Type', 'Birth Date', 'Age (Days)', 'Protocol', 'Status', 'Date', 'Period', 'Consumption', 'Notes', 'User', 'Diagnoses', 'Treatment Medicines']);
     calves.forEach(calf => {
       const calfFeedings = getCalfFeedings(calf);
       const age = getCalfAgeDays(calf.birth_date);
       const protocol = getProtocolStatus(calf);
+      const plans = getCalfTreatmentPlans(calf);
+      const diagnosesSummary = plans.map(p => `${p.diagnosis}${p.completed ? ' (completed)' : ''}`).join('; ');
+      const medsSummary = plans.flatMap(p => getTreatmentMedicinesForPlan(p.id).map(m => `${m.medicine_name} ${m.dosage} (${getShiftSchedule(m.frequency_hours)})`)).join('; ');
       if (calfFeedings.length === 0) {
-        csvData.push([calf.bull_number || calf.number, calf.name || '', calf.type, calf.birth_date, age, protocol, calf.status, '', '', '', '', '']);
+        csvData.push([calf.bull_number || calf.number, calf.name || '', calf.type, calf.birth_date, age, protocol, calf.status, '', '', '', '', '', diagnosesSummary, medsSummary]);
       } else {
         calfFeedings.forEach(f => {
-          csvData.push([calf.bull_number || calf.number, calf.name || '', calf.type, calf.birth_date, age, protocol, calf.status, new Date(f.timestamp).toLocaleDateString(), f.period, f.consumption, f.notes || '', f.user_name]);
+          csvData.push([calf.bull_number || calf.number, calf.name || '', calf.type, calf.birth_date, age, protocol, calf.status, new Date(f.timestamp).toLocaleDateString(), f.period, f.consumption, f.notes || '', f.user_name, diagnosesSummary, medsSummary]);
         });
       }
     });
@@ -482,7 +561,10 @@ export default function CalfTracker() {
     let list;
     if (page === 'bulls') list = activeBulls;
     else if (page === 'flagged') list = flaggedCalves;
-    else list = protocol === 'all' ? activeHeifers : activeHeifers.filter(c => getProtocolStatus(c) === protocol);
+    else {
+      list = protocol === 'all' ? activeHeifers : activeHeifers.filter(c => getProtocolStatus(c) === protocol);
+      if (page === 'feed' && showNamedOnly) list = list.filter(c => c.name);
+    }
 
     return [...list].sort((a, b) =>
       (b.bull_number ? parseInt(b.bull_number.replace(/\D/g, '')) : b.number) -
@@ -606,6 +688,11 @@ export default function CalfTracker() {
                       {protocols.map(p => (
                         <button key={p.id} onClick={() => setFilterProtocol(p.name)} className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === p.name ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>{p.name}</button>
                       ))}
+                      {currentPage === 'feed' && (
+                        <button onClick={() => setShowNamedOnly(prev => !prev)} className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all flex items-center gap-1 ${showNamedOnly ? 'bg-orange-500 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>
+                          <Beef size={12} /> Named
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -620,7 +707,6 @@ export default function CalfTracker() {
                     currentPeriod={getETPeriod()}
                     onRecord={(pct) => recordFeeding(calf, pct)}
                     onSaveNote={(note) => saveNote(calf, note)}
-                    saving={!!savingFeeding[calf.bull_number || calf.number]}
                     onStatus={(id, s) => {
                       if (confirm(`Mark as ${s}?`)) {
                         if (calf.type === 'bull') {
@@ -689,11 +775,17 @@ export default function CalfTracker() {
                 ))}
               </div>
             </section>
+            {currentUser.role === 'admin' && (
+              <button onClick={() => { setShowSettings(false); setShowAnalytics(true); }} className="w-full p-6 bg-blue-50 text-blue-600 rounded-[2rem] font-black uppercase flex items-center justify-center gap-2"><TrendingUp size={20} /> Analytics</button>
+            )}
             <button onClick={exportToCSV} className="w-full p-6 bg-green-50 text-green-600 rounded-[2rem] font-black uppercase flex items-center justify-center gap-2"><Download size={20} /> Export CSV</button>
             <button onClick={() => { setCurrentUser(null); localStorage.removeItem('calfTrackerUser'); setShowSettings(false); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black uppercase">Logout</button>
           </div>
         </div>
       )}
+
+      {/* ── ANALYTICS PAGE (admin only) ── */}
+      {showAnalytics && <AnalyticsPage onClose={() => setShowAnalytics(false)} />}
 
       {/* ── HISTORY MODAL with prev/next nav ── */}
       {selectedCalfHistory && (
@@ -731,9 +823,33 @@ export default function CalfTracker() {
                 <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">Birth Date</label>
                 <input type="datetime-local" value={newCalf.birthDate} onChange={(e) => setNewCalf({ ...newCalf, birthDate: e.target.value })} className="w-full p-5 bg-slate-50 rounded-2xl font-bold border-0 mt-1 outline-none text-slate-800" />
               </div>
+              {!newCalf.isBull && newCalf.name.trim() !== '' && (
+                <div className="space-y-3 p-4 bg-blue-50 rounded-2xl border border-blue-100">
+                  <label className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Number Assignment</label>
+                  <div className="flex gap-2 p-1.5 bg-white rounded-2xl">
+                    <button onClick={() => { setNewCalf({ ...newCalf, useCustomNumber: false, customNumber: '' }); setNumberCheck({ status: null }); }} className={`flex-1 py-2 rounded-xl font-black text-xs transition-all ${!newCalf.useCustomNumber ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>Auto (#{settings.nextCalfNumber})</button>
+                    <button onClick={() => setNewCalf({ ...newCalf, useCustomNumber: true })} className={`flex-1 py-2 rounded-xl font-black text-xs transition-all ${newCalf.useCustomNumber ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>Custom</button>
+                  </div>
+                  {newCalf.useCustomNumber && (
+                    <div>
+                      <input
+                        type="number"
+                        placeholder="Enter custom number"
+                        value={newCalf.customNumber}
+                        onChange={(e) => { setNewCalf({ ...newCalf, customNumber: e.target.value }); setNumberCheck({ status: null }); }}
+                        onBlur={() => checkCustomNumberAvailability(newCalf.customNumber)}
+                        className="w-full p-4 bg-white rounded-2xl font-black border-0 outline-none"
+                      />
+                      {numberCheck.status === 'checking' && <p className="text-[10px] text-slate-400 font-bold mt-1 ml-2">Checking availability...</p>}
+                      {numberCheck.status === 'taken' && <p className="text-[10px] text-red-500 font-black mt-1 ml-2 uppercase">Number already in use</p>}
+                      {numberCheck.status === 'available' && <p className="text-[10px] text-green-600 font-black mt-1 ml-2 uppercase">Available</p>}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <button onClick={addCalf} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg shadow-lg uppercase">Create</button>
-            <button onClick={() => setShowAddCalf(false)} className="w-full text-slate-400 font-black text-xs uppercase text-center">Cancel</button>
+            <button onClick={() => { setShowAddCalf(false); setNumberCheck({ status: null }); }} className="w-full text-slate-400 font-black text-xs uppercase text-center">Cancel</button>
           </div>
         </div>
       )}
@@ -785,11 +901,12 @@ export default function CalfTracker() {
                 </div>
                 <div className="space-y-2">
                   <label className="text-[9px] font-black text-blue-600 uppercase ml-2">Medicine Name</label>
-                  <select value={newMedicine.name} onChange={(e) => setNewMedicine({ ...newMedicine, name: e.target.value })} className="w-full p-3 bg-white rounded-xl font-bold border-0 text-sm">
+                  <select value={medicines.find(m => m.name === newMedicine.name) ? newMedicine.name : ''} onChange={(e) => handleMedicineNameSelect(e.target.value)} className="w-full p-3 bg-white rounded-xl font-bold border-0 text-sm">
                     <option value="">Select or type below...</option>
                     {medicines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                   </select>
-                  <input type="text" placeholder="Or type custom medicine name" value={newMedicine.name} onChange={(e) => setNewMedicine({ ...newMedicine, name: e.target.value })} className="w-full p-3 bg-white rounded-xl font-bold border-0 text-sm" />
+                  <input type="text" placeholder="Or type custom medicine name (e.g. Banamine (Single Dose))" value={newMedicine.name} onChange={(e) => handleMedicineNameSelect(e.target.value)} className="w-full p-3 bg-white rounded-xl font-bold border-0 text-sm" />
+                  <p className="text-[9px] text-blue-500 ml-2 italic">Selecting a saved drug autofills its usual dosage/schedule below. For drugs with both a single-dose and multi-day option, save them as two separate names.</p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[9px] font-black text-blue-600 uppercase ml-2">Dosage</label>
@@ -856,11 +973,11 @@ export default function CalfTracker() {
                         <button onClick={() => setEditingTreatmentId(null)} className="text-blue-400"><X size={18} /></button>
                       </div>
                       <div className="space-y-2">
-                        <select value={addExistingMedicine.name} onChange={(e) => setAddExistingMedicine({ ...addExistingMedicine, name: e.target.value })} className="w-full p-2 bg-white rounded-xl font-bold border-0 text-xs">
+                        <select value={medicines.find(m => m.name === addExistingMedicine.name) ? addExistingMedicine.name : ''} onChange={(e) => handleExistingMedicineNameSelect(e.target.value)} className="w-full p-2 bg-white rounded-xl font-bold border-0 text-xs">
                           <option value="">Select medicine...</option>
                           {medicines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                         </select>
-                        <input type="text" placeholder="Or type custom name" value={addExistingMedicine.name} onChange={(e) => setAddExistingMedicine({ ...addExistingMedicine, name: e.target.value })} className="w-full p-2 bg-white rounded-xl font-bold border-0 text-xs" />
+                        <input type="text" placeholder="Or type custom name" value={addExistingMedicine.name} onChange={(e) => handleExistingMedicineNameSelect(e.target.value)} className="w-full p-2 bg-white rounded-xl font-bold border-0 text-xs" />
                       </div>
                       <input type="text" placeholder="Dosage (e.g., 5ml)" value={addExistingMedicine.dosage} onChange={(e) => setAddExistingMedicine({ ...addExistingMedicine, dosage: e.target.value })} className="w-full p-2 bg-white rounded-xl font-bold border-0 text-xs" />
                       <div className="grid grid-cols-2 gap-2">
@@ -1038,7 +1155,7 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
 }
 
 // ── CALF CARD COMPONENT ──
-function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSaveNote, onStatus, onShowHistory, noteValue, setNoteValue, treatmentPlans, treatmentGivenToday, onMarkTreatmentGiven, onNewDiagnosis, onViewTreatment, calculateProgress, saving }) {
+function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSaveNote, onStatus, onShowHistory, noteValue, setNoteValue, treatmentPlans, treatmentGivenToday, onMarkTreatmentGiven, onNewDiagnosis, onViewTreatment, calculateProgress }) {
   const latest = [...history].slice(0, 3).reverse();
   const todayET = getETDateString(getETDate());
   const todayFeeding = history.find(f => {
@@ -1055,6 +1172,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSav
           <div className="flex items-center gap-2">
             <h3 className="text-4xl font-black italic tracking-tighter text-slate-900 leading-none">#{calf.bull_number || calf.number}</h3>
             {todayFeeding && <CheckCircle2 className="text-green-500" size={24} />}
+            {calf.name && <Beef className="text-orange-500" size={20} title="Named / Special" />}
           </div>
           {/* FIX: show name if present */}
           {calf.name && <p className="text-sm font-black text-slate-600 uppercase tracking-wide mt-0.5">{calf.name}</p>}
@@ -1141,14 +1259,183 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSav
             <button
               key={pct}
               onClick={() => onRecord(pct)}
-              disabled={saving}
-              className={`py-5 rounded-2xl font-black text-sm transition-all shadow-sm disabled:opacity-40 ${todayFeeding?.consumption === pct ? 'bg-blue-600 text-white ring-4 ring-blue-100 scale-95' : 'bg-slate-50 text-slate-300 active:bg-slate-100'}`}
+              className={`py-5 rounded-2xl font-black text-sm transition-all shadow-sm ${todayFeeding?.consumption === pct ? 'bg-blue-600 text-white ring-4 ring-blue-100 scale-95' : 'bg-slate-50 text-slate-300 active:bg-slate-100'}`}
             >
               {pct}%
             </button>
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── ANALYTICS PAGE (admin only) ──
+// Fetches its own bounded, date-ranged dataset independently of the main app
+// state, so opening Analytics never slows down normal feeding entry, and the
+// query cost stays flat as feeding history grows across years.
+function AnalyticsPage({ onClose }) {
+  const [rangeDays, setRangeDays] = useState(90);
+  const [loadingData, setLoadingData] = useState(true);
+  const [calvesData, setCalvesData] = useState([]);
+  const [feedingsData, setFeedingsData] = useState([]);
+  const [treatmentLogsData, setTreatmentLogsData] = useState([]);
+  const [treatmentPlansData, setTreatmentPlansData] = useState([]);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoadingData(true);
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - rangeDays);
+      const cutoffISO = cutoff.toISOString();
+
+      const { data: f } = await supabase.from('feedings').select('*').gte('timestamp', cutoffISO);
+      const { data: c } = await supabase.from('calves').select('id, number, bull_number, name, birth_date, type, status');
+      const { data: tl } = await supabase.from('treatment_logs').select('*').gte('timestamp', cutoffISO);
+      const { data: tp } = await supabase.from('treatment_plans').select('*');
+
+      setFeedingsData(f || []);
+      setCalvesData(c || []);
+      setTreatmentLogsData(tl || []);
+      setTreatmentPlansData(tp || []);
+      setLoadingData(false);
+    };
+    load();
+  }, [rangeDays]);
+
+  const ageBuckets = [
+    { label: '0-5 Days (Colostrum/Bottles)', min: 0, max: 5 },
+    { label: '6-35 Days (Regular)', min: 6, max: 35 },
+    { label: '36-40 Days (PM Only)', min: 36, max: 40 },
+    { label: '41+ Days (Weaned)', min: 41, max: Infinity },
+  ];
+
+  const calfByNumber = {};
+  calvesData.forEach(c => {
+    if (c.bull_number) calfByNumber[`b_${c.bull_number}`] = c;
+    if (c.number !== null && c.number !== undefined) calfByNumber[`n_${c.number}`] = c;
+  });
+
+  const bucketStats = ageBuckets.map(b => ({ ...b, total: 0, count: 0 }));
+  feedingsData.forEach(f => {
+    const calf = f.bull_number ? calfByNumber[`b_${f.bull_number}`] : calfByNumber[`n_${f.calf_number}`];
+    if (!calf || !calf.birth_date) return;
+    const ageAtFeeding = Math.floor((new Date(f.timestamp) - new Date(calf.birth_date)) / (1000 * 60 * 60 * 24));
+    const bucket = bucketStats.find(b => ageAtFeeding >= b.min && ageAtFeeding <= b.max);
+    if (bucket) { bucket.total += f.consumption; bucket.count += 1; }
+  });
+
+  const dayPeriodMap = {};
+  feedingsData.forEach(f => {
+    if (f.consumption > 50) return;
+    const dateStr = utcToETDateString(f.timestamp);
+    const key = `${dateStr}_${f.period}`;
+    if (!dayPeriodMap[key]) dayPeriodMap[key] = [];
+    dayPeriodMap[key].push(f);
+  });
+  const outbreakDays = Object.entries(dayPeriodMap)
+    .filter(([key, arr]) => new Set(arr.map(f => f.bull_number || f.calf_number)).size >= 3)
+    .map(([key, arr]) => {
+      const [dateStr, period] = key.split('_');
+      const uniqueCalves = new Set(arr.map(f => f.bull_number || f.calf_number));
+      return { date: dateStr, period, calfCount: uniqueCalves.size };
+    })
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const employeeStats = {};
+  feedingsData.forEach(f => {
+    if (!employeeStats[f.user_name]) employeeStats[f.user_name] = { total: 0, count: 0 };
+    employeeStats[f.user_name].total += f.consumption;
+    employeeStats[f.user_name].count += 1;
+  });
+  const employeeRows = Object.entries(employeeStats)
+    .map(([name, s]) => ({ name, avg: s.total / s.count, count: s.count }))
+    .sort((a, b) => b.count - a.count);
+
+  return (
+    <div className="fixed inset-0 bg-white z-[80] flex flex-col">
+      <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
+        <div>
+          <h2 className="text-3xl font-black italic uppercase tracking-tighter">Analytics</h2>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Admin Only</p>
+        </div>
+        <button onClick={onClose} className="p-3 bg-slate-200 rounded-full"><X size={24} /></button>
+      </div>
+
+      <div className="p-4 flex gap-2 bg-white border-b">
+        {[30, 90, 365].map(d => (
+          <button key={d} onClick={() => setRangeDays(d)} className={`px-4 py-2 rounded-full font-black text-[10px] uppercase ${rangeDays === d ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>Last {d} Days</button>
+        ))}
+      </div>
+
+      {loadingData ? (
+        <div className="flex-1 flex items-center justify-center font-black uppercase italic text-blue-600">Crunching Numbers...</div>
+      ) : (
+        <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-slate-50">
+          <section className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+            <div className="flex items-center gap-2 mb-4 text-blue-600"><TrendingUp size={18} /><span className="text-xs font-black uppercase tracking-widest">Consumption by Age Group</span></div>
+            <div className="space-y-4">
+              {bucketStats.map(b => {
+                const avg = b.count > 0 ? Math.round(b.total / b.count) : null;
+                return (
+                  <div key={b.label}>
+                    <div className="flex justify-between text-xs font-black text-slate-500 uppercase mb-1">
+                      <span>{b.label}</span>
+                      <span>{avg !== null ? `${avg}% avg (${b.count} feedings)` : 'No data'}</span>
+                    </div>
+                    <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                      {avg !== null && (
+                        <div className={`h-full rounded-full ${avg >= 75 ? 'bg-green-500' : avg >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${avg}%` }} />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+            <div className="flex items-center gap-2 mb-4 text-red-500"><AlertTriangle size={18} /><span className="text-xs font-black uppercase tracking-widest">Outbreak Watch (3+ Calves ≤50% Same Shift)</span></div>
+            {outbreakDays.length === 0 ? (
+              <p className="text-sm text-slate-400 italic text-center py-6">No multi-calf decline patterns in this window.</p>
+            ) : (
+              <div className="space-y-2">
+                {outbreakDays.map((o, i) => (
+                  <div key={i} className="p-4 bg-red-50 rounded-2xl flex justify-between items-center">
+                    <span className="font-black text-red-900 text-sm">{new Date(o.date).toLocaleDateString()} • {o.period}</span>
+                    <span className="text-xs font-black text-red-600 uppercase">{o.calfCount} calves affected</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+            <div className="flex items-center gap-2 mb-4 text-blue-600"><Users size={18} /><span className="text-xs font-black uppercase tracking-widest">Feeding Log by Employee</span></div>
+            <p className="text-[10px] text-slate-400 mb-4 italic">Reflects logging patterns, not calf outcomes -- feeder assignment isn't random, so treat this as a conversation starter, not a verdict.</p>
+            <div className="space-y-3">
+              {employeeRows.map(e => (
+                <div key={e.name} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                  <span className="font-black text-slate-800">{e.name}</span>
+                  <span className="text-xs font-black text-slate-500">{Math.round(e.avg)}% avg • {e.count} feedings</span>
+                </div>
+              ))}
+              {employeeRows.length === 0 && <p className="text-sm text-slate-400 italic text-center py-6">No feedings logged in this window.</p>}
+            </div>
+          </section>
+
+          <section className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+            <div className="flex items-center gap-2 mb-4 text-red-500"><Activity size={18} /><span className="text-xs font-black uppercase tracking-widest">Treatment Correlation</span></div>
+            {treatmentLogsData.length === 0 ? (
+              <p className="text-sm text-slate-400 italic text-center py-6">Not enough treatment data yet -- this view will populate once treatments start being logged.</p>
+            ) : (
+              <div className="space-y-2 text-sm text-slate-600">
+                <p>{treatmentPlansData.length} treatment plan(s) and {treatmentLogsData.length} treatment log(s) recorded in this window.</p>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
