@@ -46,6 +46,24 @@ const getCalfAgeDays = (birthDateString) => {
 
 const DIAGNOSES = ['Scours', 'Respiratory/Pneumonia', 'High Fever', 'Unknown'];
 
+// Small red cross badge marking a treatment day on feeding bars/graphs.
+// Built as raw SVG rather than a named icon import so it can't silently
+// break if an icon library's export names change.
+function TreatmentBadge({ size = 16, className = '', title = 'Treatment given' }) {
+  return (
+    <div
+      className={`bg-red-500 rounded-full flex items-center justify-center shadow ${className}`}
+      style={{ width: size, height: size, minWidth: size }}
+      title={title}
+    >
+      <svg viewBox="0 0 24 24" width={size * 0.55} height={size * 0.55} fill="none" stroke="white" strokeWidth="4" strokeLinecap="round">
+        <line x1="12" y1="4" x2="12" y2="20" />
+        <line x1="4" y1="12" x2="20" y2="12" />
+      </svg>
+    </div>
+  );
+}
+
 export default function CalfTracker() {
   const [currentUser, setCurrentUser] = useState(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -55,6 +73,11 @@ export default function CalfTracker() {
   const [protocols, setProtocols] = useState([]);
   const [medicines, setMedicines] = useState([]);
   const [treatmentPlans, setTreatmentPlans] = useState([]);
+  // Lightweight lifetime record (active + completed) used only to answer "has this
+  // calf ever been treated" / "was there a treatment on this date" for history/graph
+  // badges. Nothing is ever deleted from the DB on Complete -- this just also loads
+  // the completed rows the main `treatmentPlans` state intentionally excludes.
+  const [allTreatmentHistory, setAllTreatmentHistory] = useState([]);
   const [treatmentMedicines, setTreatmentMedicines] = useState([]);
   const [treatmentLogs, setTreatmentLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -89,6 +112,48 @@ export default function CalfTracker() {
   const [editingTreatmentId, setEditingTreatmentId] = useState(null);
   const [addExistingMedicine, setAddExistingMedicine] = useState({ name: '', dosage: '', hours: 24, totalTreatments: 5 });
   const pendingInsertRef = useRef({});
+
+  // ── Mobile back-button fix ──────────────────────────────────────────────
+  // The app is a single URL with everything (pages, modals) driven by React
+  // state, so the phone's hardware/gesture back button has nothing of ours to
+  // step through by default and just leaves the site. Fix: every time we open
+  // a page-level view or modal, we also push a browser history entry and
+  // remember how to close it (backStackRef). Every close action -- whether
+  // triggered by the hardware back button OR an in-app X/Cancel/Back button --
+  // goes through the SAME path (goBack -> history.back() -> popstate handler),
+  // so the two can never fall out of sync.
+  const backStackRef = useRef([]);
+
+  const pushBack = (closer) => {
+    window.history.pushState({ claudeNav: true }, '');
+    backStackRef.current.push(closer);
+  };
+
+  // Swaps what the TOP entry closes without adding a new history depth level --
+  // used when one overlay directly replaces another (e.g. Settings -> Analytics)
+  // so back from the new one skips the old one instead of re-showing it.
+  const replaceTopBack = (closer) => {
+    if (backStackRef.current.length > 0) {
+      backStackRef.current[backStackRef.current.length - 1] = closer;
+    } else {
+      pushBack(closer);
+    }
+  };
+
+  const goBack = () => {
+    if (backStackRef.current.length > 0) {
+      window.history.back();
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const closer = backStackRef.current.pop();
+      if (closer) closer();
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -164,6 +229,8 @@ export default function CalfTracker() {
       if (m) setMedicines(m);
       const { data: tp } = await supabase.from('treatment_plans').select('*').eq('completed', false);
       if (tp) setTreatmentPlans(tp);
+      const { data: allTp } = await supabase.from('treatment_plans').select('id, calf_id, diagnosis, completed');
+      if (allTp) setAllTreatmentHistory(allTp);
       const { data: tm } = await supabase.from('treatment_medicines').select('*');
       if (tm) setTreatmentMedicines(tm);
       const { data: tl } = await supabase.from('treatment_logs').select('*').order('timestamp', { ascending: false });
@@ -198,11 +265,12 @@ export default function CalfTracker() {
   const addCalf = async () => {
     let bullNumber = null;
     let dbNumberValue;
+    let usedBullCounter = settings.nextBullNumber;
+    let usedCalfCounter = settings.nextCalfNumber;
     if (newCalf.isBull) {
-      bullNumber = `M${settings.nextBullNumber}`;
-      dbNumberValue = -settings.nextBullNumber;
+      bullNumber = `M${usedBullCounter}`;
+      dbNumberValue = -usedBullCounter;
     } else {
-      const autoNum = settings.nextCalfNumber;
       if (newCalf.useCustomNumber && newCalf.customNumber) {
         if (numberCheck.status === 'taken') {
           alert('That number is already in use. Choose a different one.');
@@ -210,10 +278,11 @@ export default function CalfTracker() {
         }
         dbNumberValue = parseInt(newCalf.customNumber);
       } else {
-        dbNumberValue = autoNum;
+        dbNumberValue = usedCalfCounter;
       }
     }
-    const { error } = await supabase.from('calves').insert([{
+
+    let { error } = await supabase.from('calves').insert([{
       number: dbNumberValue,
       bull_number: bullNumber,
       name: newCalf.name.trim() || null,
@@ -221,20 +290,56 @@ export default function CalfTracker() {
       status: 'active',
       type: newCalf.isBull ? 'bull' : 'heifer'
     }]);
-    if (!error) {
-      if (newCalf.isBull) await saveGlobalSetting('nextBullNumber', settings.nextBullNumber + 1);
-      else if (dbNumberValue === settings.nextCalfNumber) await saveGlobalSetting('nextCalfNumber', settings.nextCalfNumber + 1);
-      setShowAddCalf(false);
-      setNewCalf({
-        name: '',
-        birthDate: new Date(getETDate().getTime() - getETDate().getTimezoneOffset() * 60000).toISOString().slice(0, 16),
-        isBull: false,
-        useCustomNumber: false,
-        customNumber: ''
-      });
-      setNumberCheck({ status: null });
-      await loadAllData();
+
+    // FIX: this used to fail completely silently (Create button "did nothing") if the
+    // saved counter had drifted out of sync with numbers actually in use -- e.g. the
+    // bull counter pointing at M3 when M3-M70 already existed, hitting the database's
+    // uniqueness rule on every attempt. Now: on a duplicate-number error, we self-heal
+    // by finding the true highest number in use, correct the saved counter, and retry
+    // once automatically. Any other failure now surfaces a real alert instead of
+    // silently doing nothing.
+    if (error && error.code === '23505') {
+      const { data: existing } = await supabase.from('calves').select('number, bull_number').not('number', 'is', null);
+      if (newCalf.isBull) {
+        const maxBull = Math.max(0, ...(existing || []).filter(c => c.bull_number).map(c => parseInt((c.bull_number || '').replace(/\D/g, '')) || 0));
+        usedBullCounter = maxBull + 1;
+        await saveGlobalSetting('nextBullNumber', usedBullCounter);
+        bullNumber = `M${usedBullCounter}`;
+        dbNumberValue = -usedBullCounter;
+      } else if (!newCalf.useCustomNumber) {
+        const maxNumber = Math.max(0, ...(existing || []).map(c => c.number || 0));
+        usedCalfCounter = maxNumber + 1;
+        await saveGlobalSetting('nextCalfNumber', usedCalfCounter);
+        dbNumberValue = usedCalfCounter;
+      }
+      ({ error } = await supabase.from('calves').insert([{
+        number: dbNumberValue,
+        bull_number: bullNumber,
+        name: newCalf.name.trim() || null,
+        birth_date: newCalf.birthDate,
+        status: 'active',
+        type: newCalf.isBull ? 'bull' : 'heifer'
+      }]));
     }
+
+    if (error) {
+      console.error('addCalf error:', error);
+      alert(`Could not create this entry: ${error.message || 'unknown error'}. Nothing was saved -- please try again.`);
+      return;
+    }
+
+    if (newCalf.isBull) await saveGlobalSetting('nextBullNumber', usedBullCounter + 1);
+    else if (!newCalf.useCustomNumber) await saveGlobalSetting('nextCalfNumber', usedCalfCounter + 1);
+    setNewCalf({
+      name: '',
+      birthDate: new Date(getETDate().getTime() - getETDate().getTimezoneOffset() * 60000).toISOString().slice(0, 16),
+      isBull: false,
+      useCustomNumber: false,
+      customNumber: ''
+    });
+    setNumberCheck({ status: null });
+    goBack();
+    await loadAllData();
   };
 
   // PERF FIX (#1) + button-disable fix: no more freezing the button while a full
@@ -334,49 +439,74 @@ export default function CalfTracker() {
 
   const getCalfTreatmentPlans = (calf) => treatmentPlans.filter(tp => tp.calf_id === calf.id);
 
-  const getActiveCalfTreatmentPlans = (calf) => {
-    const plans = treatmentPlans.filter(tp => tp.calf_id === calf.id);
-    return plans.filter(plan => {
-      const planLogs = treatmentLogs.filter(tl => tl.treatment_plan_id === plan.id);
-      const meds = getTreatmentMedicinesForPlan(plan.id);
-      if (meds.length === 0) return true;
-      const maxTreatments = Math.max(...meds.map(m => m.total_treatments));
-      return planLogs.length < maxTreatments;
-    });
-  };
-
   const getTreatmentMedicinesForPlan = (planId) => treatmentMedicines.filter(tm => tm.treatment_plan_id === planId);
 
-  const getTreatmentGivenToday = (calf) => {
-    const todayET = getETDateString(getETDate());
-    const plans = getActiveCalfTreatmentPlans(calf);
-    for (let plan of plans) {
-      const log = treatmentLogs.find(tl => {
-        const logDate = utcToETDateString(tl.timestamp);
-        return tl.treatment_plan_id === plan.id && logDate === todayET;
-      });
-      if (log) return true;
-    }
-    return false;
+  // Has this calf EVER had a treatment plan (active or completed)? Used for the
+  // "treated at some point" badge near the calf number in History.
+  const calfHasEverBeenTreated = (calf) => allTreatmentHistory.some(tp => tp.calf_id === calf.id);
+
+  // Set of ET date-strings on which this calf had a treatment logged, across every
+  // plan it's ever had (active or completed). Used to badge individual feeding
+  // entries/bars on the days treatment was actually given.
+  const getCalfTreatmentDates = (calf) => {
+    const planIds = allTreatmentHistory.filter(tp => tp.calf_id === calf.id).map(tp => tp.id);
+    const dates = new Set();
+    treatmentLogs.forEach(tl => {
+      if (planIds.includes(tl.treatment_plan_id)) dates.add(utcToETDateString(tl.timestamp));
+    });
+    return dates;
   };
 
+  // FIX: checkbox was gated on an internal "is this plan still within its day-count"
+  // check, which silently excluded plans (and made the checkbox unclickable/inert)
+  // once a course reached its expected length, even though the plan hadn't been
+  // explicitly marked Complete. Now any non-completed plan counts, matching what's
+  // actually visible on the card. Also switched to AND logic so "given" only shows
+  // once every active plan has today's log, matching the checkbox's own label
+  // ("Check when all meds administered") instead of the old any-one-plan OR logic.
+  const getTreatmentGivenToday = (calf) => {
+    const todayET = getETDateString(getETDate());
+    const plans = getCalfTreatmentPlans(calf);
+    if (plans.length === 0) return false;
+    return plans.every(plan =>
+      treatmentLogs.some(tl => tl.treatment_plan_id === plan.id && utcToETDateString(tl.timestamp) === todayET)
+    );
+  };
+
+  // Optimistic + error-surfacing: the checkbox now flips instantly instead of
+  // waiting on a full reload, and a failed save shows an alert instead of silently
+  // doing nothing (which is what made the original bug so hard to notice/diagnose).
   const markTreatmentGiven = async (calf) => {
     const todayET = getETDateString(getETDate());
-    const plans = getActiveCalfTreatmentPlans(calf);
-    for (let plan of plans) {
-      const existing = treatmentLogs.find(tl => {
-        const logDate = utcToETDateString(tl.timestamp);
-        return tl.treatment_plan_id === plan.id && logDate === todayET;
-      });
-      if (!existing) {
-        await supabase.from('treatment_logs').insert([{
+    const plans = getCalfTreatmentPlans(calf);
+    const plansNeedingLog = plans.filter(plan =>
+      !treatmentLogs.some(tl => tl.treatment_plan_id === plan.id && utcToETDateString(tl.timestamp) === todayET)
+    );
+    if (plansNeedingLog.length === 0) return;
+
+    const optimisticLogs = plansNeedingLog.map(plan => ({
+      id: `optimistic_${plan.id}_${Date.now()}`,
+      treatment_plan_id: plan.id,
+      user_name: currentUser.name,
+      timestamp: new Date().toISOString()
+    }));
+    setTreatmentLogs(prev => [...optimisticLogs, ...prev]);
+
+    try {
+      for (let plan of plansNeedingLog) {
+        const { error } = await supabase.from('treatment_logs').insert([{
           treatment_plan_id: plan.id,
           user_name: currentUser.name,
           timestamp: new Date().toISOString()
         }]);
+        if (error) throw error;
       }
+      await loadAllData();
+    } catch (err) {
+      console.error('markTreatmentGiven error:', err);
+      alert('Could not save treatment log — check your connection and try again.');
+      setTreatmentLogs(prev => prev.filter(tl => !optimisticLogs.some(o => o.id === tl.id)));
     }
-    await loadAllData();
   };
 
   // Medicine template system: saving a brand-new medicine now stores its default
@@ -450,8 +580,7 @@ export default function CalfTracker() {
       }
       setNewTreatmentMedicines([]);
       setNewDiagnosis('Scours');
-      setShowNewDiagnosis(false);
-      setSelectedCalfForTreatment(null);
+      goBack();
       await loadAllData();
     }
   };
@@ -572,10 +701,19 @@ export default function CalfTracker() {
     );
   };
 
+  // dashboard -> feed/bulls/flagged, with a back-stack entry so hardware back
+  // (or the in-app Back button) returns to the dashboard.
+  const navigateToPage = (page, protocol = 'all') => {
+    setFilterProtocol(protocol);
+    setCurrentPage(page);
+    pushBack(() => { setCurrentPage('dashboard'); setFilterProtocol('all'); setShowNamedOnly(false); });
+  };
+
   // ── history nav handlers ──
   const openHistory = (calf, navList) => {
     setSelectedCalfHistory(calf);
     setHistoryNavList(navList);
+    pushBack(() => setSelectedCalfHistory(null));
   };
 
   const navigateHistory = (direction) => {
@@ -607,7 +745,7 @@ export default function CalfTracker() {
             <h1 className="font-black text-3xl mb-8 italic tracking-tighter uppercase text-slate-900 leading-none">Operator Login</h1>
             <div className="space-y-4 text-left overflow-y-auto max-h-[60vh]">
               {users.map(u => (
-                <button key={u.id} onClick={() => { setSelectedUser(u); setShowPinEntry(true); }} className="w-full p-6 bg-slate-100 rounded-3xl font-black transition-all uppercase flex justify-between items-center group text-slate-700 active:bg-blue-600 active:text-white">
+                <button key={u.id} onClick={() => { setSelectedUser(u); setShowPinEntry(true); pushBack(() => { setShowPinEntry(false); setPinInput(''); }); }} className="w-full p-6 bg-slate-100 rounded-3xl font-black transition-all uppercase flex justify-between items-center group text-slate-700 active:bg-blue-600 active:text-white">
                   {u.name} <Activity className="opacity-0 group-hover:opacity-100" />
                 </button>
               ))}
@@ -622,14 +760,14 @@ export default function CalfTracker() {
                   if (pinInput === selectedUser.pin) {
                     setCurrentUser(selectedUser);
                     localStorage.setItem('calfTrackerUser', JSON.stringify(selectedUser));
-                    setShowPinEntry(false);
                     setPinInput('');
+                    goBack();
                   } else {
                     alert("Wrong Pin");
                     setPinInput('');
                   }
                 }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg uppercase">Unlock</button>
-                <button onClick={() => { setShowPinEntry(false); setPinInput(''); }} className="w-full text-slate-400 font-black text-xs uppercase">Cancel</button>
+                <button onClick={goBack} className="w-full text-slate-400 font-black text-xs uppercase">Cancel</button>
               </div>
             </div>
           )}
@@ -641,14 +779,14 @@ export default function CalfTracker() {
               <h1 className="font-black text-2xl italic tracking-tighter uppercase">Calf Tracker</h1>
               <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">{currentUser.name} • {getETPeriod()} Shift</p>
             </div>
-            <button onClick={() => setShowSettings(true)} className="p-3 bg-white/20 rounded-full active:scale-90 transition-transform"><Settings size={20} /></button>
+            <button onClick={() => { setShowSettings(true); pushBack(() => { setShowSettings(false); loadAllData(); }); }} className="p-3 bg-white/20 rounded-full active:scale-90 transition-transform"><Settings size={20} /></button>
           </header>
 
           <main className="p-4 max-w-2xl mx-auto space-y-4">
             {currentPage === 'dashboard' ? (
               <div className="space-y-4">
                 {flaggedCalves.length > 0 && (
-                  <button onClick={() => setCurrentPage('flagged')} className="w-full bg-red-500 text-white p-6 rounded-[2.5rem] flex justify-between items-center shadow-lg animate-pulse">
+                  <button onClick={() => navigateToPage('flagged')} className="w-full bg-red-500 text-white p-6 rounded-[2.5rem] flex justify-between items-center shadow-lg animate-pulse">
                     <div>
                       <div className="text-3xl font-black">{flaggedCalves.length}</div>
                       <div className="text-[10px] font-black uppercase tracking-widest text-left">Attention Required</div>
@@ -657,11 +795,11 @@ export default function CalfTracker() {
                   </button>
                 )}
                 <div className="grid grid-cols-2 gap-4">
-                  <button onClick={() => { setFilterProtocol('all'); setCurrentPage('feed'); }} className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-200 text-left active:scale-95 transition-transform">
+                  <button onClick={() => navigateToPage('feed')} className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-200 text-left active:scale-95 transition-transform">
                     <div className="text-4xl font-black text-blue-600">{heifersOnProtocol.length}</div>
                     <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Heifers</div>
                   </button>
-                  <button onClick={() => { setFilterProtocol('all'); setCurrentPage('bulls'); }} className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-200 text-left active:scale-95 transition-transform">
+                  <button onClick={() => navigateToPage('bulls')} className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-200 text-left active:scale-95 transition-transform">
                     <div className="text-4xl font-black text-blue-800">{activeBulls.length}</div>
                     <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bulls</div>
                   </button>
@@ -670,7 +808,7 @@ export default function CalfTracker() {
                   <h3 className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-4 px-2 italic text-center">Protocol Groups</h3>
                   <div className="grid grid-cols-2 gap-3">
                     {protocols.map(p => (
-                      <button key={p.id} onClick={() => { setFilterProtocol(p.name); setCurrentPage('feed'); }} className="bg-slate-50 p-4 rounded-2xl text-left border border-slate-100 active:bg-blue-50">
+                      <button key={p.id} onClick={() => navigateToPage('feed', p.name)} className="bg-slate-50 p-4 rounded-2xl text-left border border-slate-100 active:bg-blue-50">
                         <div className="font-black text-blue-600 text-xl">{activeHeifers.filter(c => getProtocolStatus(c) === p.name).length}</div>
                         <div className="text-[9px] font-black text-slate-500 uppercase">{p.name}</div>
                       </button>
@@ -681,7 +819,7 @@ export default function CalfTracker() {
             ) : (
               <div className="space-y-4">
                 <div className="flex flex-col gap-4">
-                  <button onClick={() => { setCurrentPage('dashboard'); setFilterProtocol('all'); }} className="flex items-center text-blue-600 font-black text-xs uppercase bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16} /> Back</button>
+                  <button onClick={goBack} className="flex items-center text-blue-600 font-black text-xs uppercase bg-blue-50 px-4 py-2 rounded-full w-fit"><ChevronLeft size={16} /> Back</button>
                   {currentPage !== 'flagged' && currentPage !== 'bulls' && (
                     <div className="flex gap-2 overflow-x-auto pb-2">
                       <button onClick={() => setFilterProtocol('all')} className={`px-5 py-2 rounded-full font-black text-[10px] uppercase whitespace-nowrap transition-all ${filterProtocol === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>All Heifers</button>
@@ -724,9 +862,10 @@ export default function CalfTracker() {
                     treatmentPlans={getCalfTreatmentPlans(calf)}
                     treatmentGivenToday={getTreatmentGivenToday(calf)}
                     onMarkTreatmentGiven={() => markTreatmentGiven(calf)}
-                    onNewDiagnosis={() => { setSelectedCalfForTreatment(calf); setShowNewDiagnosis(true); }}
-                    onViewTreatment={() => { setSelectedCalfForTreatment(calf); setShowTreatmentPlan(true); }}
+                    onNewDiagnosis={() => { setSelectedCalfForTreatment(calf); setShowNewDiagnosis(true); pushBack(() => { setShowNewDiagnosis(false); setSelectedCalfForTreatment(null); setNewTreatmentMedicines([]); }); }}
+                    onViewTreatment={() => { setSelectedCalfForTreatment(calf); setShowTreatmentPlan(true); pushBack(() => { setShowTreatmentPlan(false); setSelectedCalfForTreatment(null); }); }}
                     calculateProgress={calculateProgress}
+                    treatmentDates={getCalfTreatmentDates(calf)}
                   />
                 ))}
               </div>
@@ -740,7 +879,7 @@ export default function CalfTracker() {
         <div className="fixed inset-0 bg-white z-[100] flex flex-col overflow-y-auto pb-10">
           <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
             <h2 className="text-3xl font-black italic uppercase tracking-tighter">Farm Settings</h2>
-            <button onClick={() => { setShowSettings(false); loadAllData(); }} className="p-3 bg-slate-200 rounded-full"><X size={24} /></button>
+            <button onClick={goBack} className="p-3 bg-slate-200 rounded-full"><X size={24} /></button>
           </div>
           <div className="p-6 space-y-10">
             <section className="space-y-4">
@@ -776,7 +915,7 @@ export default function CalfTracker() {
               </div>
             </section>
             {currentUser.role === 'admin' && (
-              <button onClick={() => { setShowSettings(false); setShowAnalytics(true); }} className="w-full p-6 bg-blue-50 text-blue-600 rounded-[2rem] font-black uppercase flex items-center justify-center gap-2"><TrendingUp size={20} /> Analytics</button>
+              <button onClick={() => { setShowSettings(false); setShowAnalytics(true); replaceTopBack(() => setShowAnalytics(false)); }} className="w-full p-6 bg-blue-50 text-blue-600 rounded-[2rem] font-black uppercase flex items-center justify-center gap-2"><TrendingUp size={20} /> Analytics</button>
             )}
             <button onClick={exportToCSV} className="w-full p-6 bg-green-50 text-green-600 rounded-[2rem] font-black uppercase flex items-center justify-center gap-2"><Download size={20} /> Export CSV</button>
             <button onClick={() => { setCurrentUser(null); localStorage.removeItem('calfTrackerUser'); setShowSettings(false); }} className="w-full p-6 bg-red-50 text-red-600 rounded-[2rem] font-black uppercase">Logout</button>
@@ -785,13 +924,13 @@ export default function CalfTracker() {
       )}
 
       {/* ── ANALYTICS PAGE (admin only) ── */}
-      {showAnalytics && <AnalyticsPage onClose={() => setShowAnalytics(false)} />}
+      {showAnalytics && <AnalyticsPage onClose={goBack} />}
 
       {/* ── HISTORY MODAL with prev/next nav ── */}
       {selectedCalfHistory && (
         <HistoryModal
           calf={selectedCalfHistory}
-          onClose={() => setSelectedCalfHistory(null)}
+          onClose={goBack}
           history={getCalfFeedings(selectedCalfHistory)}
           historyNavIndex={historyNavIndex}
           historyNavList={historyNavList}
@@ -799,12 +938,14 @@ export default function CalfTracker() {
           isAdmin={currentUser.role === 'admin'}
           onUpdateFeeding={adminUpdateFeeding}
           onDeleteFeeding={adminDeleteFeeding}
+          treatmentDates={getCalfTreatmentDates(selectedCalfHistory)}
+          everTreated={calfHasEverBeenTreated(selectedCalfHistory)}
         />
       )}
 
       {/* ── ADD CALF MODAL ── */}
       <div className="fixed bottom-0 left-0 right-0 p-6 flex justify-center z-30 pointer-events-none">
-        <button onClick={() => setShowAddCalf(true)} className="bg-slate-900 text-white w-full max-w-xs py-5 rounded-[2.5rem] font-black shadow-2xl flex items-center justify-center gap-3 pointer-events-auto active:scale-95 transition-transform">
+        <button onClick={() => { setShowAddCalf(true); pushBack(() => { setShowAddCalf(false); setNumberCheck({ status: null }); }); }} className="bg-slate-900 text-white w-full max-w-xs py-5 rounded-[2.5rem] font-black shadow-2xl flex items-center justify-center gap-3 pointer-events-auto active:scale-95 transition-transform">
           <Plus size={24} /> ADD NEW CALF
         </button>
       </div>
@@ -849,7 +990,7 @@ export default function CalfTracker() {
               )}
             </div>
             <button onClick={addCalf} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-lg shadow-lg uppercase">Create</button>
-            <button onClick={() => { setShowAddCalf(false); setNumberCheck({ status: null }); }} className="w-full text-slate-400 font-black text-xs uppercase text-center">Cancel</button>
+            <button onClick={goBack} className="w-full text-slate-400 font-black text-xs uppercase text-center">Cancel</button>
           </div>
         </div>
       )}
@@ -860,7 +1001,7 @@ export default function CalfTracker() {
           <div className="bg-white rounded-[3rem] p-8 w-full max-w-lg space-y-6 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-black italic text-slate-800 uppercase">New Diagnosis</h2>
-              <button onClick={() => { setShowNewDiagnosis(false); setSelectedCalfForTreatment(null); setNewTreatmentMedicines([]); }} className="p-2 hover:bg-slate-100 rounded-full"><X size={24} /></button>
+              <button onClick={goBack} className="p-2 hover:bg-slate-100 rounded-full"><X size={24} /></button>
             </div>
             <div className="p-3 bg-blue-50 rounded-2xl">
               <div className="font-black text-blue-900">Calf #{selectedCalfForTreatment.bull_number || selectedCalfForTreatment.number}</div>
@@ -938,7 +1079,7 @@ export default function CalfTracker() {
         <div className="fixed inset-0 bg-white z-[70] flex flex-col">
           <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0">
             <h2 className="text-2xl font-black italic uppercase tracking-tighter">Treatment Plans</h2>
-            <button onClick={() => { setShowTreatmentPlan(false); setSelectedCalfForTreatment(null); }} className="p-3 bg-slate-200 rounded-full"><X size={24} /></button>
+            <button onClick={goBack} className="p-3 bg-slate-200 rounded-full"><X size={24} /></button>
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {getCalfTreatmentPlans(selectedCalfForTreatment).map(treatment => (
@@ -1000,7 +1141,7 @@ export default function CalfTracker() {
 }
 
 // ── HISTORY MODAL COMPONENT (with admin edit/delete) ──
-function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList, navigateHistory, isAdmin, onUpdateFeeding, onDeleteFeeding }) {
+function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList, navigateHistory, isAdmin, onUpdateFeeding, onDeleteFeeding, treatmentDates, everTreated }) {
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState({ consumption: 0, period: 'AM', notes: '' });
 
@@ -1028,7 +1169,10 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
     <div className="fixed inset-0 bg-white z-[100] flex flex-col">
       <div className="p-6 border-b flex justify-between items-center bg-slate-50 sticky top-0 z-10">
         <div>
-          <h2 className="text-3xl font-black italic text-slate-900 uppercase">#{calf.bull_number || calf.number}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-3xl font-black italic text-slate-900 uppercase">#{calf.bull_number || calf.number}</h2>
+            {everTreated && <TreatmentBadge size={20} title="Has treatment history" />}
+          </div>
           {calf.name && (
             <p className="text-sm font-black text-slate-500 uppercase tracking-widest">{calf.name}</p>
           )}
@@ -1072,8 +1216,10 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
                 }
                 return latest14.map((f, i) => {
                   const heightPercent = Math.max(f.consumption, 5);
+                  const wasTreated = treatmentDates && treatmentDates.has(utcToETDateString(f.timestamp));
                   return (
-                    <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
+                    <div key={i} className="flex-1 flex flex-col items-center justify-end h-full relative">
+                      {wasTreated && <TreatmentBadge size={14} className="absolute -top-1 z-10" />}
                       <div
                         className={`w-full rounded-t transition-all ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
                         style={{ height: `${heightPercent}%` }}
@@ -1131,7 +1277,10 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
               ) : (
                 <>
                   <div className="flex justify-between items-center mb-2">
-                    <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
+                      {treatmentDates && treatmentDates.has(utcToETDateString(f.timestamp)) && <TreatmentBadge size={18} />}
+                    </div>
                     <span className="text-[10px] font-black text-slate-400 uppercase">{f.user_name}</span>
                   </div>
                   {f.notes && <p className="text-sm italic text-slate-600 bg-slate-50 p-3 rounded-xl mb-2">"{f.notes}"</p>}
@@ -1155,7 +1304,7 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
 }
 
 // ── CALF CARD COMPONENT ──
-function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSaveNote, onStatus, onShowHistory, noteValue, setNoteValue, treatmentPlans, treatmentGivenToday, onMarkTreatmentGiven, onNewDiagnosis, onViewTreatment, calculateProgress }) {
+function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSaveNote, onStatus, onShowHistory, noteValue, setNoteValue, treatmentPlans, treatmentGivenToday, onMarkTreatmentGiven, onNewDiagnosis, onViewTreatment, calculateProgress, treatmentDates }) {
   const latest = [...history].slice(0, 3).reverse();
   const todayET = getETDateString(getETDate());
   const todayFeeding = history.find(f => {
@@ -1217,15 +1366,21 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSav
       </button>
 
       <div className="grid grid-cols-3 gap-2 mb-4" onClick={onShowHistory}>
-        {latest.length > 0 ? latest.map((f, i) => (
-          <div key={i} className="flex flex-col items-center">
-            <div className={`w-full py-2 rounded-xl text-center text-white text-[9px] font-black shadow-sm ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</div>
-            <div className="text-[11px] font-black text-slate-600 uppercase mt-1 tracking-tight text-center leading-tight">
-              <div>{new Date(f.timestamp).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}</div>
-              <div className="text-blue-600">{f.period}</div>
+        {latest.length > 0 ? latest.map((f, i) => {
+          const wasTreated = treatmentDates && treatmentDates.has(utcToETDateString(f.timestamp));
+          return (
+            <div key={i} className="flex flex-col items-center">
+              <div className="relative w-full">
+                <div className={`w-full py-2 rounded-xl text-center text-white text-[9px] font-black shadow-sm ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</div>
+                {wasTreated && <TreatmentBadge size={16} className="absolute -top-1.5 -right-1.5" />}
+              </div>
+              <div className="text-[11px] font-black text-slate-600 uppercase mt-1 tracking-tight text-center leading-tight">
+                <div>{new Date(f.timestamp).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}</div>
+                <div className="text-blue-600">{f.period}</div>
+              </div>
             </div>
-          </div>
-        )) : <div className="col-span-3 py-2 border-2 border-dashed border-slate-50 rounded-xl text-center text-[8px] font-black text-slate-200 uppercase tracking-widest flex items-center justify-center italic">No Feedings</div>}
+          );
+        }) : <div className="col-span-3 py-2 border-2 border-dashed border-slate-50 rounded-xl text-center text-[8px] font-black text-slate-200 uppercase tracking-widest flex items-center justify-center italic">No Feedings</div>}
       </div>
 
       {/* FIX: note input with dedicated save button */}
