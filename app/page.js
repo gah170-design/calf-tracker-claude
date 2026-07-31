@@ -33,6 +33,14 @@ const getETPeriod = () => {
   return etNow.getHours() < 12 ? 'AM' : 'PM';
 };
 
+// Same before-noon-ET-is-AM rule as getETPeriod, but for a specific past
+// timestamp instead of "right now" -- used to figure out which shift a
+// treatment log actually falls in, not just which day.
+const utcToETPeriod = (utcTimestamp) => {
+  const etDate = new Date(new Date(utcTimestamp).toLocaleString("en-US", { timeZone: "America/New_York" }));
+  return etDate.getHours() < 12 ? 'AM' : 'PM';
+};
+
 const getCalfAgeDays = (birthDateString) => {
   const birthDate = new Date(birthDateString);
   const birthETString = getETDateString(birthDate);
@@ -448,13 +456,19 @@ export default function CalfTracker() {
   // Set of ET date-strings on which this calf had a treatment logged, across every
   // plan it's ever had (active or completed). Used to badge individual feeding
   // entries/bars on the days treatment was actually given.
-  const getCalfTreatmentDates = (calf) => {
-    const planIds = allTreatmentHistory.filter(tp => tp.calf_id === calf.id).map(tp => tp.id);
-    const dates = new Set();
+  // Set of "date_period" keys (e.g. "2026-07-29_AM") for every shift this calf
+  // was actually treated in, across every plan it's ever had. Matching on shift
+  // instead of just date means a single-dose treatment given in the AM only
+  // badges that AM feeding -- not the PM feeding on the same day too.
+  const getCalfTreatmentShifts = (calf) => {
+    const planIds = allTreatmentHistory.filter(tp => tp.calf_id === calf.id).map(tp => String(tp.id));
+    const shifts = new Set();
     treatmentLogs.forEach(tl => {
-      if (planIds.includes(tl.treatment_plan_id)) dates.add(utcToETDateString(tl.timestamp));
+      if (planIds.includes(String(tl.treatment_plan_id))) {
+        shifts.add(`${utcToETDateString(tl.timestamp)}_${utcToETPeriod(tl.timestamp)}`);
+      }
     });
-    return dates;
+    return shifts;
   };
 
   // FIX: checkbox was gated on an internal "is this plan still within its day-count"
@@ -500,6 +514,18 @@ export default function CalfTracker() {
           timestamp: new Date().toISOString()
         }]);
         if (error) throw error;
+
+        // Auto-complete: once this plan's logged days reach the longest course
+        // among its medicines (same max used for "Day X of Y" progress), the
+        // plan is done -- no manual "Complete" button needed anymore.
+        const meds = getTreatmentMedicinesForPlan(plan.id);
+        if (meds.length > 0) {
+          const maxTreatments = Math.max(...meds.map(m => m.total_treatments));
+          const loggedCount = treatmentLogs.filter(tl => tl.treatment_plan_id === plan.id).length + 1; // +1 for the log we just inserted
+          if (loggedCount >= maxTreatments) {
+            await supabase.from('treatment_plans').update({ completed: true, completed_at: new Date().toISOString() }).eq('id', plan.id);
+          }
+        }
       }
       await loadAllData();
     } catch (err) {
@@ -612,13 +638,6 @@ export default function CalfTracker() {
   const deleteTreatmentPlan = async (planId) => {
     if (confirm('Delete this treatment plan?')) {
       await supabase.from('treatment_plans').delete().eq('id', planId);
-      await loadAllData();
-    }
-  };
-
-  const completeTreatmentPlan = async (planId) => {
-    if (confirm('Mark this treatment as complete?')) {
-      await supabase.from('treatment_plans').update({ completed: true, completed_at: new Date().toISOString() }).eq('id', planId);
       await loadAllData();
     }
   };
@@ -865,7 +884,7 @@ export default function CalfTracker() {
                     onNewDiagnosis={() => { setSelectedCalfForTreatment(calf); setShowNewDiagnosis(true); pushBack(() => { setShowNewDiagnosis(false); setSelectedCalfForTreatment(null); setNewTreatmentMedicines([]); }); }}
                     onViewTreatment={() => { setSelectedCalfForTreatment(calf); setShowTreatmentPlan(true); pushBack(() => { setShowTreatmentPlan(false); setSelectedCalfForTreatment(null); }); }}
                     calculateProgress={calculateProgress}
-                    treatmentDates={getCalfTreatmentDates(calf)}
+                    treatmentShifts={getCalfTreatmentShifts(calf)}
                   />
                 ))}
               </div>
@@ -938,7 +957,7 @@ export default function CalfTracker() {
           isAdmin={currentUser.role === 'admin'}
           onUpdateFeeding={adminUpdateFeeding}
           onDeleteFeeding={adminDeleteFeeding}
-          treatmentDates={getCalfTreatmentDates(selectedCalfHistory)}
+          treatmentShifts={getCalfTreatmentShifts(selectedCalfHistory)}
           everTreated={calfHasEverBeenTreated(selectedCalfHistory)}
         />
       )}
@@ -1091,7 +1110,6 @@ export default function CalfTracker() {
                   </div>
                   <div className="flex gap-2">
                     <button onClick={() => deleteTreatmentPlan(treatment.id)} className="px-4 py-2 bg-red-100 text-red-700 rounded-xl font-black text-xs uppercase hover:bg-red-200">Delete</button>
-                    <button onClick={() => completeTreatmentPlan(treatment.id)} className="px-4 py-2 bg-green-100 text-green-700 rounded-xl font-black text-xs uppercase hover:bg-green-200">Complete</button>
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -1141,7 +1159,7 @@ export default function CalfTracker() {
 }
 
 // ── HISTORY MODAL COMPONENT (with admin edit/delete) ──
-function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList, navigateHistory, isAdmin, onUpdateFeeding, onDeleteFeeding, treatmentDates, everTreated }) {
+function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList, navigateHistory, isAdmin, onUpdateFeeding, onDeleteFeeding, treatmentShifts, everTreated }) {
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState({ consumption: 0, period: 'AM', notes: '' });
 
@@ -1216,7 +1234,7 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
                 }
                 return latest14.map((f, i) => {
                   const heightPercent = Math.max(f.consumption, 5);
-                  const wasTreated = treatmentDates && treatmentDates.has(utcToETDateString(f.timestamp));
+                  const wasTreated = treatmentShifts && treatmentShifts.has(`${utcToETDateString(f.timestamp)}_${f.period}`);
                   return (
                     <div key={i} className="flex-1 flex flex-col items-center justify-end h-full relative">
                       {wasTreated && <TreatmentBadge size={14} className="absolute -top-1 z-10" />}
@@ -1279,7 +1297,7 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
                       <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
-                      {treatmentDates && treatmentDates.has(utcToETDateString(f.timestamp)) && <TreatmentBadge size={18} />}
+                      {treatmentShifts && treatmentShifts.has(`${utcToETDateString(f.timestamp)}_${f.period}`) && <TreatmentBadge size={18} />}
                     </div>
                     <span className="text-[10px] font-black text-slate-400 uppercase">{f.user_name}</span>
                   </div>
@@ -1304,7 +1322,7 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
 }
 
 // ── CALF CARD COMPONENT ──
-function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSaveNote, onStatus, onShowHistory, noteValue, setNoteValue, treatmentPlans, treatmentGivenToday, onMarkTreatmentGiven, onNewDiagnosis, onViewTreatment, calculateProgress, treatmentDates }) {
+function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSaveNote, onStatus, onShowHistory, noteValue, setNoteValue, treatmentPlans, treatmentGivenToday, onMarkTreatmentGiven, onNewDiagnosis, onViewTreatment, calculateProgress, treatmentShifts }) {
   const latest = [...history].slice(0, 3).reverse();
   const todayET = getETDateString(getETDate());
   const todayFeeding = history.find(f => {
@@ -1367,7 +1385,7 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSav
 
       <div className="grid grid-cols-3 gap-2 mb-4" onClick={onShowHistory}>
         {latest.length > 0 ? latest.map((f, i) => {
-          const wasTreated = treatmentDates && treatmentDates.has(utcToETDateString(f.timestamp));
+          const wasTreated = treatmentShifts && treatmentShifts.has(`${utcToETDateString(f.timestamp)}_${f.period}`);
           return (
             <div key={i} className="flex flex-col items-center">
               <div className="relative w-full">
