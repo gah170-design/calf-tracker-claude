@@ -453,23 +453,36 @@ export default function CalfTracker() {
   // "treated at some point" badge near the calf number in History.
   const calfHasEverBeenTreated = (calf) => allTreatmentHistory.some(tp => tp.calf_id === calf.id);
 
-  // Map of "date_period" key (e.g. "2026-07-29_AM") -> diagnosis name, for every
-  // shift this calf was actually treated in, across every plan it's ever had.
-  // Matching on shift instead of just date means a single-dose treatment given in
-  // the AM only badges that AM feeding -- not the PM feeding on the same day too.
-  // If two different diagnoses somehow land on the same shift, names are joined.
+  // Map of "date_period" key (e.g. "2026-07-29_AM") -> { diagnosis, medicines }
+  // for every shift this calf was actually treated in, across every plan it's
+  // ever had. Matching on shift instead of just date means a single-dose
+  // treatment given in the AM only badges that AM feeding -- not the PM feeding
+  // on the same day too. If two different diagnoses/plans somehow land on the
+  // same shift, their names and medicines are merged together.
   const getCalfTreatmentShifts = (calf) => {
+    const calfPlans = allTreatmentHistory.filter(tp => tp.calf_id === calf.id);
     const planIdToDiagnosis = {};
-    allTreatmentHistory.filter(tp => tp.calf_id === calf.id).forEach(tp => {
+    const planIdToMedicines = {};
+    calfPlans.forEach(tp => {
       planIdToDiagnosis[String(tp.id)] = tp.diagnosis;
+      planIdToMedicines[String(tp.id)] = getTreatmentMedicinesForPlan(tp.id).map(m => ({ name: m.medicine_name, dosage: m.dosage }));
     });
     const shifts = new Map();
     treatmentLogs.forEach(tl => {
-      const diagnosis = planIdToDiagnosis[String(tl.treatment_plan_id)];
+      const planKey = String(tl.treatment_plan_id);
+      const diagnosis = planIdToDiagnosis[planKey];
       if (diagnosis) {
         const key = `${utcToETDateString(tl.timestamp)}_${utcToETPeriod(tl.timestamp)}`;
+        const meds = planIdToMedicines[planKey] || [];
         const existing = shifts.get(key);
-        shifts.set(key, existing && existing !== diagnosis ? `${existing}, ${diagnosis}` : diagnosis);
+        if (existing) {
+          shifts.set(key, {
+            diagnosis: existing.diagnosis === diagnosis ? existing.diagnosis : `${existing.diagnosis}, ${diagnosis}`,
+            medicines: [...existing.medicines, ...meds]
+          });
+        } else {
+          shifts.set(key, { diagnosis, medicines: meds });
+        }
       }
     });
     return shifts;
@@ -1238,16 +1251,17 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
                 }
                 return latest14.map((f, i) => {
                   const heightPercent = Math.max(f.consumption, 5);
-                  const diagnosis = treatmentShifts && treatmentShifts.get(`${utcToETDateString(f.timestamp)}_${f.period}`);
+                  const shift = treatmentShifts && treatmentShifts.get(`${utcToETDateString(f.timestamp)}_${f.period}`);
+                  const tooltip = shift ? `${shift.diagnosis}${shift.medicines.length ? ' — ' + shift.medicines.map(m => `${m.name} (${m.dosage})`).join(', ') : ''}` : '';
                   return (
                     <div key={i} className="flex-1 flex flex-col items-center justify-end h-full relative">
-                      {diagnosis && <TreatmentBadge size={14} className="absolute -top-1 z-10" />}
+                      {shift && <TreatmentBadge size={14} className="absolute -top-1 z-10" title={tooltip} />}
                       <div
                         className={`w-full rounded-t transition-all ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
                         style={{ height: `${heightPercent}%` }}
                       />
                       <div className="text-[7px] font-black text-slate-400 mt-1 uppercase">{f.period}</div>
-                      {diagnosis && <div className="text-[6px] font-black text-red-500 uppercase leading-tight text-center truncate max-w-[36px]" title={diagnosis}>{diagnosis}</div>}
+                      {shift && <div className="text-[6px] font-black text-red-500 uppercase leading-tight text-center truncate max-w-[36px]" title={tooltip}>{shift.diagnosis}</div>}
                     </div>
                   );
                 });
@@ -1300,17 +1314,27 @@ function HistoryModal({ calf, onClose, history, historyNavIndex, historyNavList,
               ) : (
                 <>
                   <div className="flex justify-between items-center mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
-                      {treatmentShifts && treatmentShifts.get(`${utcToETDateString(f.timestamp)}_${f.period}`) && (
-                        <div className="flex items-center gap-1.5 bg-red-50 px-2.5 py-1.5 rounded-xl">
-                          <TreatmentBadge size={16} />
-                          <span className="text-[10px] font-black text-red-600 uppercase">{treatmentShifts.get(`${utcToETDateString(f.timestamp)}_${f.period}`)}</span>
-                        </div>
-                      )}
-                    </div>
+                    <span className={`px-4 py-2 rounded-2xl text-white font-black text-xs ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</span>
                     <span className="text-[10px] font-black text-slate-400 uppercase">{f.user_name}</span>
                   </div>
+                  {treatmentShifts && treatmentShifts.get(`${utcToETDateString(f.timestamp)}_${f.period}`) && (() => {
+                    const shift = treatmentShifts.get(`${utcToETDateString(f.timestamp)}_${f.period}`);
+                    return (
+                      <div className="flex items-start gap-2 bg-red-50 px-3 py-2 rounded-xl mb-2">
+                        <TreatmentBadge size={16} className="mt-0.5" />
+                        <div className="text-xs">
+                          <div className="font-black text-red-700 uppercase">{shift.diagnosis}</div>
+                          {shift.medicines.length > 0 && (
+                            <div className="text-red-500 font-bold">
+                              {shift.medicines.map((m, mi) => (
+                                <div key={mi}>{m.name}{m.dosage ? ` — ${m.dosage}` : ''}</div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {f.notes && <p className="text-sm italic text-slate-600 bg-slate-50 p-3 rounded-xl mb-2">"{f.notes}"</p>}
                   <div className="flex justify-between items-center">
                     <p className="text-[10px] font-black text-slate-400 uppercase">{new Date(f.timestamp).toLocaleDateString()} • {f.period}</p>
@@ -1395,17 +1419,23 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSav
 
       <div className="grid grid-cols-3 gap-2 mb-4" onClick={onShowHistory}>
         {latest.length > 0 ? latest.map((f, i) => {
-          const diagnosis = treatmentShifts && treatmentShifts.get(`${utcToETDateString(f.timestamp)}_${f.period}`);
+          const shift = treatmentShifts && treatmentShifts.get(`${utcToETDateString(f.timestamp)}_${f.period}`);
+          const tooltip = shift ? `${shift.diagnosis}${shift.medicines.length ? ' — ' + shift.medicines.map(m => `${m.name} (${m.dosage})`).join(', ') : ''}` : '';
           return (
             <div key={i} className="flex flex-col items-center">
               <div className="relative w-full">
                 <div className={`w-full py-2 rounded-xl text-center text-white text-[9px] font-black shadow-sm ${f.consumption >= 100 ? 'bg-green-500' : f.consumption >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}>{f.consumption}%</div>
-                {diagnosis && <TreatmentBadge size={16} className="absolute -top-1.5 -right-1.5" />}
+                {shift && <TreatmentBadge size={16} className="absolute -top-1.5 -right-1.5" title={tooltip} />}
               </div>
               <div className="text-[11px] font-black text-slate-600 uppercase mt-1 tracking-tight text-center leading-tight">
                 <div>{new Date(f.timestamp).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}</div>
                 <div className="text-blue-600">{f.period}</div>
-                {diagnosis && <div className="text-red-500 text-[9px] font-black normal-case truncate max-w-[72px]" title={diagnosis}>{diagnosis}</div>}
+                {shift && <div className="text-red-500 text-[9px] font-black normal-case truncate max-w-[72px]" title={tooltip}>{shift.diagnosis}</div>}
+                {shift && shift.medicines.length > 0 && (
+                  <div className="text-red-400 text-[8px] font-bold normal-case truncate max-w-[72px]" title={tooltip}>
+                    {shift.medicines.map(m => m.name).join(', ')}
+                  </div>
+                )}
               </div>
             </div>
           );
