@@ -488,20 +488,37 @@ export default function CalfTracker() {
     return shifts;
   };
 
+  // A plan needs per-SHIFT logging (AM and PM tracked separately) if any of its
+  // medicines is on a 12-hour schedule. Anything else (once daily, every 2-3
+  // days, single dose) only needs one log per calendar day.
+  const planNeedsShiftTracking = (plan) =>
+    getTreatmentMedicinesForPlan(plan.id).some(m => m.frequency_hours === 12);
+
   // FIX: checkbox was gated on an internal "is this plan still within its day-count"
   // check, which silently excluded plans (and made the checkbox unclickable/inert)
   // once a course reached its expected length, even though the plan hadn't been
   // explicitly marked Complete. Now any non-completed plan counts, matching what's
   // actually visible on the card. Also switched to AND logic so "given" only shows
-  // once every active plan has today's log, matching the checkbox's own label
+  // once every active plan has this shift's log, matching the checkbox's own label
   // ("Check when all meds administered") instead of the old any-one-plan OR logic.
-  const getTreatmentGivenToday = (calf) => {
+  //
+  // FIX 2: twice-daily meds (e.g. Penicillin BID) were only trackable once per
+  // CALENDAR DAY, so after checking it in the AM there was no way to separately
+  // log the PM dose -- the box just stayed "checked" all day. Plans on a 12-hour
+  // schedule now match on date+shift instead of just date, same as feeding.
+  const getTreatmentGivenThisShift = (calf) => {
     const todayET = getETDateString(getETDate());
+    const currentPeriod = getETPeriod();
     const plans = getCalfTreatmentPlans(calf);
     if (plans.length === 0) return false;
-    return plans.every(plan =>
-      treatmentLogs.some(tl => tl.treatment_plan_id === plan.id && utcToETDateString(tl.timestamp) === todayET)
-    );
+    return plans.every(plan => {
+      const shiftTracked = planNeedsShiftTracking(plan);
+      return treatmentLogs.some(tl => {
+        if (tl.treatment_plan_id !== plan.id) return false;
+        if (utcToETDateString(tl.timestamp) !== todayET) return false;
+        return shiftTracked ? utcToETPeriod(tl.timestamp) === currentPeriod : true;
+      });
+    });
   };
 
   // Optimistic + error-surfacing: the checkbox now flips instantly instead of
@@ -509,10 +526,16 @@ export default function CalfTracker() {
   // doing nothing (which is what made the original bug so hard to notice/diagnose).
   const markTreatmentGiven = async (calf) => {
     const todayET = getETDateString(getETDate());
+    const currentPeriod = getETPeriod();
     const plans = getCalfTreatmentPlans(calf);
-    const plansNeedingLog = plans.filter(plan =>
-      !treatmentLogs.some(tl => tl.treatment_plan_id === plan.id && utcToETDateString(tl.timestamp) === todayET)
-    );
+    const plansNeedingLog = plans.filter(plan => {
+      const shiftTracked = planNeedsShiftTracking(plan);
+      return !treatmentLogs.some(tl => {
+        if (tl.treatment_plan_id !== plan.id) return false;
+        if (utcToETDateString(tl.timestamp) !== todayET) return false;
+        return shiftTracked ? utcToETPeriod(tl.timestamp) === currentPeriod : true;
+      });
+    });
     if (plansNeedingLog.length === 0) return;
 
     const optimisticLogs = plansNeedingLog.map(plan => ({
@@ -532,9 +555,10 @@ export default function CalfTracker() {
         }]);
         if (error) throw error;
 
-        // Auto-complete: once this plan's logged days reach the longest course
-        // among its medicines (same max used for "Day X of Y" progress), the
-        // plan is done -- no manual "Complete" button needed anymore.
+        // Auto-complete: once this plan's logged doses reach the longest course
+        // among its medicines (total_treatments = total doses required, e.g. a
+        // 5-day BID course = 10), the plan is done -- no manual "Complete" button
+        // needed anymore.
         const meds = getTreatmentMedicinesForPlan(plan.id);
         if (meds.length > 0) {
           const maxTreatments = Math.max(...meds.map(m => m.total_treatments));
@@ -677,11 +701,11 @@ export default function CalfTracker() {
   const calculateProgress = (planId) => {
     const planLogs = treatmentLogs.filter(tl => tl.treatment_plan_id === planId);
     const meds = getTreatmentMedicinesForPlan(planId);
-    if (meds.length === 0) return 'Day 1';
+    if (meds.length === 0) return 'Dose 1';
     const maxTreatments = Math.max(...meds.map(m => m.total_treatments));
-    const currentDay = planLogs.length;
-    if (currentDay >= maxTreatments) return 'Complete';
-    return `Day ${currentDay + 1} of ${maxTreatments}`;
+    const currentDose = planLogs.length;
+    if (currentDose >= maxTreatments) return 'Complete';
+    return `Dose ${currentDose + 1} of ${maxTreatments}`;
   };
 
   // CSV export now includes active/past diagnoses and their medicines as extra
@@ -896,7 +920,7 @@ export default function CalfTracker() {
                     noteValue={noteBuffer[calf.bull_number || calf.number]}
                     setNoteValue={(val) => setNoteBuffer(prev => ({ ...prev, [calf.bull_number || calf.number]: val }))}
                     treatmentPlans={getCalfTreatmentPlans(calf)}
-                    treatmentGivenToday={getTreatmentGivenToday(calf)}
+                    treatmentGivenToday={getTreatmentGivenThisShift(calf)}
                     onMarkTreatmentGiven={() => markTreatmentGiven(calf)}
                     onNewDiagnosis={() => { setSelectedCalfForTreatment(calf); setShowNewDiagnosis(true); pushBack(() => { setShowNewDiagnosis(false); setSelectedCalfForTreatment(null); setNewTreatmentMedicines([]); }); }}
                     onViewTreatment={() => { setSelectedCalfForTreatment(calf); setShowTreatmentPlan(true); pushBack(() => { setShowTreatmentPlan(false); setSelectedCalfForTreatment(null); }); }}
@@ -1065,7 +1089,7 @@ export default function CalfTracker() {
                   <div className="text-xs text-slate-600 space-y-1">
                     <div>Dosage: <span className="font-bold">{med.dosage}</span></div>
                     <div>Schedule: <span className="font-bold">{getShiftSchedule(med.hours)}</span></div>
-                    <div>Duration: <span className="font-bold">{med.totalTreatments} treatments</span></div>
+                    <div>Duration: <span className="font-bold">{med.totalTreatments} dose{med.totalTreatments === 1 ? '' : 's'}{med.hours === 12 ? ` (${Math.ceil(med.totalTreatments / 2)} day${Math.ceil(med.totalTreatments / 2) === 1 ? '' : 's'})` : ''}</span></div>
                   </div>
                 </div>
               ))}
@@ -1095,12 +1119,13 @@ export default function CalfTracker() {
                     <input type="number" value={newMedicine.hours} onChange={(e) => setNewMedicine({ ...newMedicine, hours: parseInt(e.target.value) })} className="w-full p-3 bg-white rounded-xl font-bold border-0 text-sm" />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[9px] font-black text-blue-600 uppercase ml-2">Total Treatments</label>
+                    <label className="text-[9px] font-black text-blue-600 uppercase ml-2">Total Doses (Not Days)</label>
                     <input type="number" value={newMedicine.totalTreatments} onChange={(e) => setNewMedicine({ ...newMedicine, totalTreatments: parseInt(e.target.value) })} className="w-full p-3 bg-white rounded-xl font-bold border-0 text-sm" />
                   </div>
                 </div>
                 <div className="text-xs text-blue-700 bg-blue-100 p-3 rounded-xl">
-                  <strong>Schedule:</strong> {getShiftSchedule(newMedicine.hours)} for {newMedicine.totalTreatments} treatments
+                  <strong>Schedule:</strong> {getShiftSchedule(newMedicine.hours)} for {newMedicine.totalTreatments} dose{newMedicine.totalTreatments === 1 ? '' : 's'}
+                  {newMedicine.hours === 12 && <span> ({Math.ceil(newMedicine.totalTreatments / 2)} day{Math.ceil(newMedicine.totalTreatments / 2) === 1 ? '' : 's'} at AM &amp; PM)</span>}
                 </div>
                 <button onClick={addMedicineToNewDiagnosis} disabled={!newMedicine.name || !newMedicine.dosage} className="w-full bg-blue-600 text-white py-3 rounded-2xl font-black text-sm uppercase disabled:opacity-50">Add Medicine</button>
               </div>
@@ -1158,7 +1183,7 @@ export default function CalfTracker() {
                       <input type="text" placeholder="Dosage (e.g., 5ml)" value={addExistingMedicine.dosage} onChange={(e) => setAddExistingMedicine({ ...addExistingMedicine, dosage: e.target.value })} className="w-full p-2 bg-white rounded-xl font-bold border-0 text-xs" />
                       <div className="grid grid-cols-2 gap-2">
                         <input type="number" placeholder="Hours" value={addExistingMedicine.hours} onChange={(e) => setAddExistingMedicine({ ...addExistingMedicine, hours: parseInt(e.target.value) })} className="w-full p-2 bg-white rounded-xl font-bold border-0 text-xs" />
-                        <input type="number" placeholder="Treatments" value={addExistingMedicine.totalTreatments} onChange={(e) => setAddExistingMedicine({ ...addExistingMedicine, totalTreatments: parseInt(e.target.value) })} className="w-full p-2 bg-white rounded-xl font-bold border-0 text-xs" />
+                        <input type="number" placeholder="Total doses (not days)" value={addExistingMedicine.totalTreatments} onChange={(e) => setAddExistingMedicine({ ...addExistingMedicine, totalTreatments: parseInt(e.target.value) })} className="w-full p-2 bg-white rounded-xl font-bold border-0 text-xs" />
                       </div>
                       <button onClick={() => addMedicineToExisting(treatment.id)} className="w-full bg-blue-600 text-white py-2 rounded-xl font-black text-xs uppercase">Add Medicine</button>
                     </div>
@@ -1405,8 +1430,8 @@ function CalfCard({ calf, age, protocol, history, currentPeriod, onRecord, onSav
           <label className="flex items-center gap-3 p-4 bg-green-50 border-2 border-green-200 rounded-2xl cursor-pointer hover:bg-green-100 transition-all">
             <input type="checkbox" checked={treatmentGivenToday} onChange={onMarkTreatmentGiven} className="w-6 h-6 rounded-lg" />
             <div>
-              <div className="font-black text-sm text-green-900 uppercase">Treatments Given</div>
-              <div className="text-xs text-green-600">Check when all meds administered</div>
+              <div className="font-black text-sm text-green-900 uppercase">Treatments Given — {currentPeriod}</div>
+              <div className="text-xs text-green-600">Check when this shift's meds are administered</div>
             </div>
             {treatmentGivenToday && <CheckCircle2 className="ml-auto text-green-600" size={24} />}
           </label>
